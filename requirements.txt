@@ -1,0 +1,15 @@
+# Core Framework
+fastapi
+uvicorn
+
+# Database
+sqlalchemy
+psycopg2-binary
+
+# Environment
+python-dotenv
+
+# Development
+pytest
+black
+flake8

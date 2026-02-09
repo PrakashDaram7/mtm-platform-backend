@@ -1,0 +1,1 @@
+"""MTM Digital Platform Backend."""
