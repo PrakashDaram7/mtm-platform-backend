@@ -14,3 +14,4 @@ def subtraction(a, b):
     """Example function to demonstrate route handling."""
     return a - b
 
+print(addition(3,4))
