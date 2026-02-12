@@ -13,3 +13,4 @@ python-dotenv
 pytest
 black
 flake8
+alembic
