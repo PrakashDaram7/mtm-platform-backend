@@ -3,16 +3,5 @@
 TODO:
 - Implement this file as part of assigned development tasks.
 """
-#testing with clickup 
+
 pass
-
-def addition(a, b):
-    """Example function to demonstrate route handling."""
-    return a + b
-
-def subtraction(a, b):
-    """Example function to demonstrate route handling."""
-    return a - b
-
-print(addition(3,4))
-print(addition(3,4)) 
