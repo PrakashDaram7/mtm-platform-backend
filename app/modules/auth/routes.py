@@ -19,3 +19,9 @@ def is_prime(n):
             return False
     return True
 
+def setup_routes(app):
+    """Setup routes for the auth module.
+
+    Args:
+        app: The main application instance.
+    """
