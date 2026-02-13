@@ -6,9 +6,3 @@ TODO:
 pass
 
 
-def setup_routes(app):
-    """Setup routes for the auth module.
-
-    Args:
-        app: The main application instance.
-    """

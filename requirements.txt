@@ -9,8 +9,12 @@ psycopg2-binary
 # Environment
 python-dotenv
 
+# Caching & OTP
+redis
+
 # Development
 pytest
 black
 flake8
 alembic
+pymysql
