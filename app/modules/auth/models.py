@@ -59,7 +59,6 @@ class User(Base):
     is_active = Column(Boolean, default=True, index=True)
     is_verified = Column(Boolean, default=False)
 
-
     last_login = Column(DateTime(timezone=True), nullable=True)
 
     role_id = Column(CHAR(36), ForeignKey("roles.role_id"), nullable=True)
@@ -69,5 +68,27 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
+    otp_tokens = relationship("OTPToken", back_populates="user")
+
+
+class OTPToken(Base):
+    """OTP Token model for tracking OTP usage during login.
+    
+    Stores OTP logs for audit trail and rate limiting.
+    """
+    __tablename__ = "otp_tokens"
+
+    id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(CHAR(36), ForeignKey("users.id"), nullable=False, index=True)
+    identifier = Column(String(150), nullable=False, index=True)  # email or phone
+    otp_type = Column(String(20), nullable=False)  # 'email' or 'sms'
+    is_verified = Column(Boolean, default=False, index=True)
+    verification_attempts = Column(Integer, default=0)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    user = relationship("User", back_populates="otp_tokens")
     
 

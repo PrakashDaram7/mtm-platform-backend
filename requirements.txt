@@ -9,6 +9,10 @@ psycopg2-binary
 # Environment
 python-dotenv
 
+# Authentication & Security
+PyJWT
+email-validator
+
 # Caching & OTP
 redis
 
@@ -18,3 +22,5 @@ black
 flake8
 alembic
 pymysql
+pydantic
+jwt
