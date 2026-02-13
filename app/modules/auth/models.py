@@ -9,7 +9,7 @@ from app.core.database import Base
 
 
 class Role(Base):
-    """Role model for authentication and authorization.
+    """Role model for authentication and authorization.`
     
     Defines different roles (admin, user, moderator, etc.) with associated permissions.
     """
@@ -69,5 +69,25 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    
+    otps = relationship("OTP", back_populates="user")
 
+
+class OTP(Base):
+    """OTP (One-Time Password) model for user verification and authentication.
+    
+    Stores OTP codes sent to users for phone verification, password reset, or login.
+    OTPs are stored in both Redis (for quick access) and database (for persistence and audit).
+    """
+    __tablename__ = "otps"
+
+    otp_id = Column(CHAR(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(CHAR(36), ForeignKey("users.id"), nullable=True, index=True)
+    phone = Column(String(20), index=True, nullable=False)
+    otp_code = Column(String(10), nullable=False)  # 4-6 digit code
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    is_used = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    user = relationship("User", back_populates="otps")
