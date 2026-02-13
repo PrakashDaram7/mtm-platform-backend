@@ -63,9 +63,11 @@ class User(Base):
     last_login = Column(DateTime(timezone=True), nullable=True)
 
     role_id = Column(CHAR(36), ForeignKey("roles.role_id"), nullable=True)
+    role = relationship("Role", back_populates="users")
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    role = relationship("Role", back_populates="users")
+    
 

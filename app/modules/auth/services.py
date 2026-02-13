@@ -1,10 +1,4 @@
-"""Auth module services.
 
-This module provides authentication-related services including:
-- OTP generation and validation
-- OTP storage and retrieval with Redis TTL expiry
-- OTP attempt tracking and rate limiting
-"""
 
 import json
 import secrets
@@ -24,9 +18,9 @@ class OTPConfig:
     """Configuration for OTP generation and validation."""
 
     DEFAULT_LENGTH = 6  # 6-digit OTP
-    DEFAULT_EXPIRY_MINUTES = 10  # OTP expires in 10 minutes
+    DEFAULT_EXPIRY_MINUTES = 2  # OTP expires in 10 minutes
     DEFAULT_EXPIRY_SECONDS = DEFAULT_EXPIRY_MINUTES * 60
-    MAX_ATTEMPTS = 5  # Maximum failed validation attempts
+    MAX_ATTEMPTS = 3  # Maximum failed validation attempts
     REDIS_HOST = "localhost"
     REDIS_PORT = 6379
     REDIS_DB = 0
@@ -38,7 +32,7 @@ class OTPType(str, Enum):
 
     EMAIL = "email"
     SMS = "sms"
-    TOTP = "totp"
+   
 
 
 # Redis client initialization
