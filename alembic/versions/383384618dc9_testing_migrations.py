@@ -1,8 +1,8 @@
-"""roles added
+"""testing migrations
 
-Revision ID: 2558f39a7628
-Revises: 10c2e578a5d6
-Create Date: 2026-02-12 16:16:48.325167
+Revision ID: 383384618dc9
+Revises: 
+Create Date: 2026-02-12 18:08:01.523782
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
 
 # revision identifiers, used by Alembic.
-revision: str = '2558f39a7628'
-down_revision: Union[str, Sequence[str], None] = '10c2e578a5d6'
+revision: str = '383384618dc9'
+down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
