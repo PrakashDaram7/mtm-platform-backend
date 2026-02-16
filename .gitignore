@@ -188,6 +188,18 @@ cython_debug/
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
+# Alembic / Database Migrations
+# Each developer has their own local database, so we ignore migration files
+alembic/versions/*.py
+alembic/versions/__pycache__/
+*.db
+*.sqlite
+*.sqlite3
+migrations/versions/*.py
+migrations/versions/__pycache__/
+# Keep alembic directory structure but ignore generated files
+!alembic/versions/.gitkeep
+
 # Ruff stuff:
 .ruff_cache/
 
