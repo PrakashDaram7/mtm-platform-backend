@@ -1,11 +1,12 @@
 """
-Seed script to populate database with roles and users.
+Seed script to populate database with roles, permissions, and sample users.
 Uses existing database connection from app.core.database
 """
 
 import uuid
 from app.core.database import SessionLocal
-from app.modules.auth.models import Role, User
+from app.core.security import hash_password
+from app.modules.auth.models import Role, User, Permission
 
 
 def seed_roles(session):
@@ -46,8 +47,69 @@ def seed_roles(session):
         raise
 
 
+def seed_permissions(session):
+    """Insert permissions for roles."""
+    print("\nSeeding permissions...")
+    
+    # Get roles
+    admin_role = session.query(Role).filter(Role.role_name == "admin").first()
+    moderator_role = session.query(Role).filter(Role.role_name == "moderator").first()
+    organizer_role = session.query(Role).filter(Role.role_name == "organizer").first()
+    user_role = session.query(Role).filter(Role.role_name == "user").first()
+    
+    permissions_data = [
+        # Admin permissions (all resources)
+        {"role_id": admin_role.role_id if admin_role else None, "permission_name": "admin.read", "resource": "admin", "action": "read"},
+        {"role_id": admin_role.role_id if admin_role else None, "permission_name": "admin.write", "resource": "admin", "action": "write"},
+        
+        # User management
+        {"role_id": admin_role.role_id if admin_role else None, "permission_name": "users.create", "resource": "users", "action": "create"},
+        {"role_id": admin_role.role_id if admin_role else None, "permission_name": "users.read", "resource": "users", "action": "read"},
+        {"role_id": admin_role.role_id if admin_role else None, "permission_name": "users.update", "resource": "users", "action": "update"},
+        {"role_id": admin_role.role_id if admin_role else None, "permission_name": "users.delete", "resource": "users", "action": "delete"},
+        
+        # Moderator permissions
+        {"role_id": moderator_role.role_id if moderator_role else None, "permission_name": "users.read", "resource": "users", "action": "read"},
+        {"role_id": moderator_role.role_id if moderator_role else None, "permission_name": "content.moderate", "resource": "content", "action": "moderate"},
+        
+        # Event organizer permissions
+        {"role_id": organizer_role.role_id if organizer_role else None, "permission_name": "events.create", "resource": "events", "action": "create"},
+        {"role_id": organizer_role.role_id if organizer_role else None, "permission_name": "events.read", "resource": "events", "action": "read"},
+        {"role_id": organizer_role.role_id if organizer_role else None, "permission_name": "events.update", "resource": "events", "action": "update"},
+        
+        # User permissions
+        {"role_id": user_role.role_id if user_role else None, "permission_name": "profile.read", "resource": "profile", "action": "read"},
+        {"role_id": user_role.role_id if user_role else None, "permission_name": "profile.update", "resource": "profile", "action": "update"},
+    ]
+    
+    try:
+        for perm_data in permissions_data:
+            if perm_data["role_id"]:
+                existing_perm = session.query(Permission).filter(
+                    Permission.permission_name == perm_data["permission_name"]
+                ).first()
+                
+                if not existing_perm:
+                    new_perm = Permission(
+                        permission_id=str(uuid.uuid4()),
+                        permission_name=perm_data["permission_name"],
+                        resource=perm_data["resource"],
+                        action=perm_data["action"],
+                        role_id=perm_data["role_id"]
+                    )
+                    session.add(new_perm)
+                    session.flush()
+                    print(f"  ✅ Added permission: {perm_data['permission_name']}")
+        
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        print(f"  Error seeding permissions: {e}")
+        raise
+
+
 def seed_users(session):
-    """Insert sample users into the database."""
+    """Insert sample users into the database with hashed passwords."""
     print("\nSeeding users...")
     
     # Get role IDs
@@ -62,7 +124,7 @@ def seed_users(session):
             "full_name": "Admin User",
             "email": "admin@mtm.com",
             "phone": "+1234567890",
-            "password_hash": "hashed_admin_password",
+            "password": "admin123",
             "role_id": admin_role.role_id if admin_role else None,
             "is_verified": True
         },
@@ -70,7 +132,7 @@ def seed_users(session):
             "full_name": "Moderator User",
             "email": "moderator@mtm.com",
             "phone": "+1234567891",
-            "password_hash": "hashed_moderator_password",
+            "password": "moderator123",
             "role_id": moderator_role.role_id if moderator_role else None,
             "is_verified": True
         },
@@ -78,23 +140,23 @@ def seed_users(session):
             "full_name": "Event Organizer",
             "email": "organizer@mtm.com",
             "phone": "+1234567892",
-            "password_hash": "hashed_organizer_password",
+            "password": "organizer123",
             "role_id": organizer_role.role_id if organizer_role else None,
             "is_verified": True
         },
         {
             "full_name": "John Member",
-            "email": "john@mtm.com",
+            "email": "member@mtm.com",
             "phone": "+1234567893",
-            "password_hash": "hashed_member_password",
+            "password": "member123",
             "role_id": member_role.role_id if member_role else None,
             "is_verified": True
         },
         {
             "full_name": "Jane User",
-            "email": "jane@mtm.com",
+            "email": "user@mtm.com",
             "phone": "+1234567894",
-            "password_hash": "hashed_user_password",
+            "password": "user123",
             "role_id": user_role.role_id if user_role else None,
             "is_verified": False
         },
@@ -112,7 +174,7 @@ def seed_users(session):
                     full_name=user_data["full_name"],
                     email=user_data["email"],
                     phone=user_data["phone"],
-                    password_hash=user_data["password_hash"],
+                    password_hash=hash_password(user_data["password"]),
                     role_id=user_data["role_id"],
                     is_active=True,
                     is_verified=user_data["is_verified"]
@@ -140,11 +202,19 @@ def main():
     
     try:
         seed_roles(session)
+        seed_permissions(session)
         seed_users(session)
         
         print("\n" + "="*60)
-        print("Database seeding completed successfully!")
+        print("✅ Database seeding completed successfully!")
         print("="*60)
+        print("\nSample Credentials for Testing:")
+        print("  Admin:      admin@mtm.com / admin123")
+        print("  Moderator:  moderator@mtm.com / moderator123")
+        print("  Organizer:  organizer@mtm.com / organizer123")
+        print("  Member:     member@mtm.com / member123")
+        print("  User:       user@mtm.com / user123")
+        print("="*60 + "\n")
         
     except Exception as e:
         print(f"\nSeeding failed: {e}")

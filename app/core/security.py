@@ -6,7 +6,7 @@ from typing import Optional, List, Dict
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -168,7 +168,23 @@ def verify_access_token(token: str) -> TokenData:
         )
 
 
-async def get_current_user(credentials: HTTPAuthCredentials = Depends(security)) -> TokenData:
+def verify_token(token: str) -> Optional[Dict]:
+    """Verify JWT token and return payload without raising exceptions.
+    
+    Args:
+        token: JWT token to verify
+        
+    Returns:
+        Token payload dictionary or None if invalid/expired
+    """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except (JWTError, Exception):
+        return None
+
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> TokenData:
     """Get current user from JWT token.
     
     Args:

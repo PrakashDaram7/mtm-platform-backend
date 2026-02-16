@@ -28,18 +28,21 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Check database connection on server startup."""
+    """Initialize application on startup."""
     db_check = check_database_connection()
-    print(f"\n{'='*50}")
-    print(f"Server Startup Check:")
-    print(f"Status: {db_check['status'].upper()}")
+    print(f"\n{'='*60}")
+    print(f"🚀 MTM Platform Backend - Startup Check")
+    print(f"{'='*60}")
+    print(f"Database Status: {db_check['status'].upper()}")
     print(f"Message: {db_check['message']}")
-    print(f"{'='*50}\n")
+    print(f"{'='*60}\n")
     
     if db_check['status'] == "failure":
         print("⚠️  Warning: Database connection failed. Server is running but database features may not work.")
     else:
         print("✓ RBAC system loaded and ready")
+        print("✓ Authentication system initialized")
+        print("✓ Role-Based Access Control (RBAC) enabled\n")
 
 
 @app.on_event("shutdown")
@@ -54,7 +57,9 @@ async def root():
     return {
         "message": "Welcome to MTM Platform Backend",
         "status": "running",
-        "features": ["Authentication", "RBAC", "OTP Verification"]
+        "features": ["Authentication", "RBAC", "OTP Verification"],
+        "api_docs": "/docs",
+        "version": "1.0.0"
     }
 
 
@@ -65,35 +70,37 @@ async def health_check():
     return {
         "status": "healthy",
         "database": db_check,
-        "rbac_enabled": True
+        "rbac_enabled": True,
+        "authentication_enabled": True
     }
 
 
-# Include auth router
-app.include_router(auth_router)
-
-# Include other module routes as they are implemented
-# from app.modules.admin.routes import router as admin_router
-# from app.modules.members.routes import router as members_router
-# from app.modules.events.routes import router as events_router
-# from app.modules.payments.routes import router as payments_router
-# from app.modules.notifications.routes import router as notifications_router
-
+# Include routers
 app.include_router(auth_router, prefix="/api", tags=["auth"])
-# app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
-# app.include_router(members_router, prefix="/api/members", tags=["members"])
-# app.include_router(events_router, prefix="/api/events", tags=["events"])
-# app.include_router(payments_router, prefix="/api/payments", tags=["payments"])
-# app.include_router(notifications_router, prefix="/api/notifications", tags=["notifications"])
+
+# Include test router for RBAC demonstrations
+try:
+    from app.modules.test.routes import router as test_router
+    app.include_router(test_router, tags=["testing"])
+except Exception as e:
+    print(f"Warning: Could not import test routes: {e}")
 
 
 if __name__ == "__main__":
     import uvicorn
     
-    print("\n🚀 Starting MTM Platform Backend Server...\n")
+    print("\n" + "="*60)
+    print("🚀 Starting MTM Platform Backend Server")
+    print("="*60)
+    print("Debug: False")
+    print("Host: 0.0.0.0")
+    print("Port: 8000")
+    print("Docs: http://localhost:8000/docs")
+    print("="*60 + "\n")
+    
     uvicorn.run(
         "main:app",
-        host="192.168.0.185",
+        host="0.0.0.0",
         port=8000,
-        reload=True  # Enable auto-reload on code changes
+        reload=True
     )
