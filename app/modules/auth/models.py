@@ -59,7 +59,6 @@ class User(Base):
     is_active = Column(Boolean, default=True, index=True)
     is_verified = Column(Boolean, default=False)
 
-
     last_login = Column(DateTime(timezone=True), nullable=True)
 
     role_id = Column(CHAR(36), ForeignKey("roles.role_id"), nullable=True)

@@ -14,7 +14,15 @@ python-multipart
 
 # Validation
 pydantic[email]
+# Authentication & Security
+PyJWT
+email-validator
+
+# Caching & OTP
+redis
 
 flake8
 alembic
 pymysql
+pydantic
+jwt

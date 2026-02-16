@@ -79,11 +79,12 @@ app.include_router(auth_router)
 # from app.modules.payments.routes import router as payments_router
 # from app.modules.notifications.routes import router as notifications_router
 
-# app.include_router(admin_router)
-# app.include_router(members_router)
-# app.include_router(events_router)
-# app.include_router(payments_router)
-# app.include_router(notifications_router)
+app.include_router(auth_router, prefix="/api", tags=["auth"])
+# app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
+# app.include_router(members_router, prefix="/api/members", tags=["members"])
+# app.include_router(events_router, prefix="/api/events", tags=["events"])
+# app.include_router(payments_router, prefix="/api/payments", tags=["payments"])
+# app.include_router(notifications_router, prefix="/api/notifications", tags=["notifications"])
 
 
 if __name__ == "__main__":
@@ -92,7 +93,7 @@ if __name__ == "__main__":
     print("\n🚀 Starting MTM Platform Backend Server...\n")
     uvicorn.run(
         "main:app",
-        host="192.168.0.231",
+        host="192.168.0.185",
         port=8000,
         reload=True  # Enable auto-reload on code changes
     )

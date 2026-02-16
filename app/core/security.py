@@ -8,15 +8,18 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthCredentials
 from sqlalchemy.orm import Session
+from dotenv import load_dotenv
 
 from app.core.database import SessionLocal
 from app.modules.auth.models import User, Role
 
+load_dotenv()
+
 # JWT Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-12345678")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", 7))
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -78,6 +81,7 @@ def create_access_token(user_id: str, email: str, roles: List[str], expires_delt
         "user_id": user_id,
         "email": email,
         "roles": roles,
+        "type": "access",
         "exp": expire,
         "iat": datetime.utcnow()
     }
@@ -107,6 +111,27 @@ def create_refresh_token(user_id: str, email: str) -> str:
     
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+def create_token_pair(user_id: str, email: str, roles: List[str]) -> Dict:
+    """Create both access and refresh tokens.
+    
+    Args:
+        user_id: User ID
+        email: User email
+        roles: List of user roles
+        
+    Returns:
+        Dictionary with both tokens and token type
+    """
+    access_token = create_access_token(user_id, email, roles)
+    refresh_token = create_refresh_token(user_id, email)
+    
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
 
 
 def verify_access_token(token: str) -> TokenData:
