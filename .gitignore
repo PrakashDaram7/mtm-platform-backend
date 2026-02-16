@@ -199,6 +199,7 @@ migrations/versions/*.py
 migrations/versions/__pycache__/
 # Keep alembic directory structure but ignore generated files
 !alembic/versions/.gitkeep
+alembic.ini
 
 # Ruff stuff:
 .ruff_cache/
