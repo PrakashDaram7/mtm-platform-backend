@@ -1,9 +1,10 @@
-"""FastAPI application entry point."""
+"""FastAPI application entry point with RBAC support."""
 import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import engine, Base
 from app.utils.helpers import check_database_connection
+from app.modules.auth.routes import router as auth_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -11,7 +12,7 @@ Base.metadata.create_all(bind=engine)
 # Initialize FastAPI app
 app = FastAPI(
     title="MTM Platform Backend",
-    description="Backend API for MTM Digital Platform",
+    description="Backend API for MTM Digital Platform with RBAC",
     version="1.0.0"
 )
 
@@ -37,6 +38,8 @@ async def startup_event():
     
     if db_check['status'] == "failure":
         print("⚠️  Warning: Database connection failed. Server is running but database features may not work.")
+    else:
+        print("✓ RBAC system loaded and ready")
 
 
 @app.on_event("shutdown")
@@ -50,7 +53,8 @@ async def root():
     """Root endpoint."""
     return {
         "message": "Welcome to MTM Platform Backend",
-        "status": "running"
+        "status": "running",
+        "features": ["Authentication", "RBAC", "OTP Verification"]
     }
 
 
@@ -60,24 +64,26 @@ async def health_check():
     db_check = check_database_connection()
     return {
         "status": "healthy",
-        "database": db_check
+        "database": db_check,
+        "rbac_enabled": True
     }
 
 
-# Include module routes (placeholder - update as modules are implemented)
-# from app.modules.auth.routes import router as auth_router
+# Include auth router
+app.include_router(auth_router)
+
+# Include other module routes as they are implemented
 # from app.modules.admin.routes import router as admin_router
 # from app.modules.members.routes import router as members_router
 # from app.modules.events.routes import router as events_router
 # from app.modules.payments.routes import router as payments_router
 # from app.modules.notifications.routes import router as notifications_router
 
-# app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
-# app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
-# app.include_router(members_router, prefix="/api/members", tags=["members"])
-# app.include_router(events_router, prefix="/api/events", tags=["events"])
-# app.include_router(payments_router, prefix="/api/payments", tags=["payments"])
-# app.include_router(notifications_router, prefix="/api/notifications", tags=["notifications"])
+# app.include_router(admin_router)
+# app.include_router(members_router)
+# app.include_router(events_router)
+# app.include_router(payments_router)
+# app.include_router(notifications_router)
 
 
 if __name__ == "__main__":

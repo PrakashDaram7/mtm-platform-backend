@@ -7,15 +7,14 @@ sqlalchemy
 psycopg2-binary
 cryptography
 
-# Environment
-python-dotenv
+# Authentication & Security
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
 
-# Caching & OTP
-redis
+# Validation
+pydantic[email]
 
-# Development
-pytest
-black
 flake8
 alembic
 pymysql
