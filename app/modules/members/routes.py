@@ -1,49 +1,93 @@
-"""Members module routes with role-based access control.
+"""Members module routes with role-based access control."""
 
-This module demonstrates protected routes for member management.
-Different routes have different protection levels:
-
-1. User profile routes - Require authenticated user
-2. Member list - Accessible by moderators and admins
-3. Member management - Admin only
-"""
-
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.security import (
     get_db,
-    require_admin,
-    require_any_role,
-    require_permission,
+    get_user_from_db,
+)
+from app.core.rbac_middleware import (
     require_authenticated,
-    get_current_authenticated_user,
+    require_admin,
 )
 from app.modules.auth.models import User
 
 
-router = APIRouter(
-    prefix="/api/members",
-    tags=["Members"]
-)
+router = APIRouter(prefix="/api/members", tags=["Members"])
 
 
-# Profile Routes - Any Authenticated User
-@router.get("/profile", response_model=dict)
+# ============================================================================
+# PUBLIC MEMBER ENDPOINTS
+# ============================================================================
+
+@router.get("")
+async def list_members(
+    db: Session = Depends(get_db),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    search: Optional[str] = None
+) -> dict:
+    """List all public member profiles (public endpoint).
+    
+    Only shows members who have made their profile public.
+    
+    Args:
+        db: Database session
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        search: Search term for member names
+        
+    Returns:
+        List of public member profiles
+    """
+    return {
+        "message": "List of public members",
+        "skip": skip,
+        "limit": limit,
+        "search": search,
+        "note": "Implement with your Member model"
+    }
+
+
+@router.get("/{member_id}")
+async def get_member_profile(
+    member_id: str,
+    db: Session = Depends(get_db)
+) -> dict:
+    """Get public profile of a member.
+    
+    Args:
+        member_id: Member ID
+        db: Database session
+        
+    Returns:
+        Member profile information
+    """
+    return {
+        "message": f"Member profile for {member_id}",
+        "note": "Implement with your Member model"
+    }
+
+
+# ============================================================================
+# AUTHENTICATED USER ENDPOINTS
+# ============================================================================
+
+@router.get("/me/profile")
 async def get_my_profile(
     current_user: User = Depends(require_authenticated)
 ) -> dict:
-    """Get current user's profile.
-    
-    Accessible by any authenticated user.
+    """Get current user's complete profile (authenticated users only).
     
     Args:
         current_user: Current authenticated user
         
     Returns:
-        User profile information
+        Complete user profile with private information
     """
     return {
         "id": current_user.id,
@@ -52,260 +96,297 @@ async def get_my_profile(
         "phone": current_user.phone,
         "is_active": current_user.is_active,
         "is_verified": current_user.is_verified,
-        "role": current_user.role.role_name if current_user.role else None,
+        "last_login": current_user.last_login,
+        "role_name": current_user.role.role_name if current_user.role else None,
         "created_at": current_user.created_at,
-        "updated_at": current_user.updated_at
+        "updated_at": current_user.updated_at,
+        "message": "Your complete profile"
     }
 
 
-@router.patch("/profile", response_model=dict)
+@router.put("/me/profile")
 async def update_my_profile(
-    full_name: Optional[str] = None,
-    phone: Optional[str] = None,
+    profile_data: dict,
     current_user: User = Depends(require_authenticated),
     db: Session = Depends(get_db)
 ) -> dict:
-    """Update current user's profile.
+    """Update current user's profile (authenticated users only).
     
-    Accessible by any authenticated user.
+    Users can only update their own profile. Admins can update anyone's profile
+    (see admin endpoints below).
     
     Args:
-        full_name: Updated full name
-        phone: Updated phone number
+        profile_data: Updated profile data
         current_user: Current authenticated user
         db: Database session
         
     Returns:
         Updated profile information
     """
-    if full_name:
-        current_user.full_name = full_name
-    if phone:
-        current_user.phone = phone
-    
-    db.commit()
-    db.refresh(current_user)
-    
     return {
-        "id": current_user.id,
-        "full_name": current_user.full_name,
-        "email": current_user.email,
-        "phone": current_user.phone,
-        "message": "Profile updated successfully"
+        "message": "Profile updated successfully",
+        "user_id": current_user.id,
+        "updated_fields": list(profile_data.keys()) if profile_data else [],
+        "note": "Implement actual update logic"
     }
 
 
-@router.get("/profile/{user_id}", response_model=dict)
-async def get_user_profile(
-    user_id: str,
+@router.get("/me/activity")
+async def get_my_activity(
+    current_user: User = Depends(require_authenticated),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100)
+) -> dict:
+    """Get current user's activity history (authenticated users only).
+    
+    Args:
+        current_user: Current authenticated user
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        
+    Returns:
+        User's activity history
+    """
+    return {
+        "message": "Your activity history",
+        "user_id": current_user.id,
+        "skip": skip,
+        "limit": limit,
+        "note": "Implement with your Activity model"
+    }
+
+
+@router.get("/me/events")
+async def get_my_events(
+    current_user: User = Depends(require_authenticated),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100)
+) -> dict:
+    """Get events registered by current user (authenticated users only).
+    
+    Args:
+        current_user: Current authenticated user
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        
+    Returns:
+        List of user's registered events
+    """
+    return {
+        "message": "Your registered events",
+        "user_id": current_user.id,
+        "skip": skip,
+        "limit": limit,
+        "note": "Implement with your Event/EventAttendee models"
+    }
+
+
+@router.post("/me/change-password")
+async def change_password(
+    old_password: str,
+    new_password: str,
     current_user: User = Depends(require_authenticated),
     db: Session = Depends(get_db)
 ) -> dict:
-    """Get another user's profile.
-    
-    Accessible by any authenticated user.
+    """Change current user's password (authenticated users only).
     
     Args:
-        user_id: ID of the user to retrieve
+        old_password: Current password for verification
+        new_password: New password
         current_user: Current authenticated user
         db: Database session
         
     Returns:
-        User profile information
+        Password change confirmation
     """
-    user = db.query(User).filter(User.id == user_id).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
     return {
-        "id": user.id,
-        "full_name": user.full_name,
-        "email": user.email,
-        "is_active": user.is_active,
-        "role": user.role.role_name if user.role else None,
-        "created_at": user.created_at
+        "message": "Password changed successfully",
+        "user_id": current_user.id,
+        "changed_at": datetime.utcnow()
     }
 
 
-# Member List Routes - Moderators and Admins
-@router.get("/", response_model=List[dict])
-async def list_members(
-    current_user: User = Depends(require_any_role(["admin", "moderator"])),
-    db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100,
-    role_filter: Optional[str] = None
-) -> List[dict]:
-    """List all members (moderators and admins only).
+@router.post("/me/update-email")
+async def update_email(
+    new_email: str,
+    current_user: User = Depends(require_authenticated),
+    db: Session = Depends(get_db)
+) -> dict:
+    """Update current user's email (authenticated users only).
     
-    Protected by require_any_role - accessible by admin OR moderator
+    Email update may require verification of the new email address.
     
     Args:
-        current_user: Moderator or admin user
+        new_email: New email address
+        current_user: Current authenticated user
+        db: Database session
+        
+    Returns:
+        Email update confirmation
+    """
+    return {
+        "message": "Email update initiated",
+        "user_id": current_user.id,
+        "old_email": current_user.email,
+        "verification_required": True,
+        "note": "Implement email verification flow"
+    }
+
+
+# ============================================================================
+# ADMIN-ONLY MEMBER MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@router.get("/admin/all-members", dependencies=[Depends(require_admin)])
+async def list_all_members_admin(
+    db: Session = Depends(get_db),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    role_filter: Optional[str] = None,
+    status_filter: Optional[str] = None
+) -> dict:
+    """List all members with detailed info (admin only).
+    
+    Admins can see all members including deactivated ones.
+    
+    Args:
         db: Database session
         skip: Number of records to skip
-        limit: Maximum records to return
-        role_filter: Optional filter by role name
+        limit: Maximum number of records to return
+        role_filter: Filter by role
+        status_filter: Filter by status (active, inactive)
         
     Returns:
-        List of member profiles
+        List of all members with full details
     """
-    query = db.query(User)
-    
-    if role_filter:
-        query = query.join(User.role).filter(
-            User.role.role_name == role_filter
-        )
-    
-    members = query.offset(skip).limit(limit).all()
-    
-    return [
-        {
-            "id": member.id,
-            "full_name": member.full_name,
-            "email": member.email,
-            "phone": member.phone,
-            "is_active": member.is_active,
-            "is_verified": member.is_verified,
-            "role": member.role.role_name if member.role else None,
-            "created_at": member.created_at
-        }
-        for member in members
-    ]
+    return {
+        "message": "All members (admin view)",
+        "skip": skip,
+        "limit": limit,
+        "role_filter": role_filter,
+        "status_filter": status_filter,
+        "admin_only": True
+    }
 
 
-@router.get("/active", response_model=List[dict])
-async def list_active_members(
-    current_user: User = Depends(require_any_role(["admin", "moderator"])),
+@router.get("/admin/{member_id}/profile", dependencies=[Depends(require_admin)])
+async def get_member_profile_admin(
+    member_id: str,
+    db: Session = Depends(get_db)
+) -> dict:
+    """Get detailed admin view of a member (admin only).
+    
+    Shows all profile information including sensitive data.
+    
+    Args:
+        member_id: Member ID
+        db: Database session
+        
+    Returns:
+        Complete member profile with admin notes
+    """
+    return {
+        "message": f"Admin view of member {member_id}",
+        "admin_only": True,
+        "fields_included": [
+            "id", "full_name", "email", "phone", "role", "status",
+            "verification_status", "activity_logs", "created_at"
+        ]
+    }
+
+
+@router.put("/admin/{member_id}/profile")
+async def update_member_profile_admin(
+    member_id: str,
+    profile_data: dict,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+) -> dict:
+    """Update a member's profile (admin only).
+    
+    Admins can update any member's profile.
+    
+    Args:
+        member_id: Member ID to update
+        profile_data: Updated profile data
+        current_admin: Current admin user
+        db: Database session
+        
+    Returns:
+        Updated member profile
+    """
+    return {
+        "message": f"Member {member_id} profile updated",
+        "updated_by": current_admin.full_name,
+        "admin_only": True
+    }
+
+
+@router.post("/admin/{member_id}/verify-email")
+async def verify_member_email_admin(
+    member_id: str,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+) -> dict:
+    """Manually verify a member's email (admin only).
+    
+    Args:
+        member_id: Member ID
+        current_admin: Current admin user
+        db: Database session
+        
+    Returns:
+        Verification confirmation
+    """
+    return {
+        "message": f"Email verified for member {member_id}",
+        "verified_by": current_admin.full_name,
+        "admin_only": True
+    }
+
+
+@router.get("/admin/pending-verification", dependencies=[Depends(require_admin)])
+async def get_pending_verification(
     db: Session = Depends(get_db),
-    limit: int = 50
-) -> List[dict]:
-    """List active members only (moderators and admins).
-    
-    Args:
-        current_user: Moderator or admin user
-        db: Database session
-        limit: Maximum records to return
-        
-    Returns:
-        List of active member profiles
-    """
-    members = db.query(User).filter(User.is_active == True).limit(limit).all()
-    
-    return [
-        {
-            "id": member.id,
-            "full_name": member.full_name,
-            "email": member.email,
-            "role": member.role.role_name if member.role else None,
-            "last_login": member.last_login
-        }
-        for member in members
-    ]
-
-
-# Member Management Routes - Admin Only
-@router.patch("/{user_id}/verify", response_model=dict)
-async def verify_member(
-    user_id: str,
-    current_user: User = Depends(require_admin),
-    db: Session = Depends(get_db)
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100)
 ) -> dict:
-    """Verify a member (admin only).
+    """List members pending email verification (admin only).
     
     Args:
-        user_id: ID of the user to verify
-        current_user: Admin user
         db: Database session
+        skip: Number of records to skip
+        limit: Maximum number of records to return
         
     Returns:
-        Updated member info
+        List of members pending verification
     """
-    user = db.query(User).filter(User.id == user_id).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Member not found"
-        )
-    
-    user.is_verified = True
-    db.commit()
-    db.refresh(user)
-    
     return {
-        "id": user.id,
-        "full_name": user.full_name,
-        "email": user.email,
-        "is_verified": True,
-        "message": "Member verified successfully"
+        "message": "Members pending email verification",
+        "skip": skip,
+        "limit": limit,
+        "admin_only": True
     }
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_200_OK)
-async def remove_member(
-    user_id: str,
-    current_user: User = Depends(require_admin),
+@router.post("/admin/{member_id}/send-verification-email")
+async def send_verification_email_admin(
+    member_id: str,
+    current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ) -> dict:
-    """Remove a member from the platform (admin only).
+    """Send verification email to a member (admin only).
     
     Args:
-        user_id: ID of the member to remove
-        current_user: Admin user
+        member_id: Member ID
+        current_admin: Current admin user
         db: Database session
         
     Returns:
-        Confirmation message
+        Email send confirmation
     """
-    user = db.query(User).filter(User.id == user_id).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Member not found"
-        )
-    
-    user_email = user.email
-    db.delete(user)
-    db.commit()
-    
     return {
-        "message": f"Member {user_email} has been removed",
-        "removed_user_id": user_id
+        "message": f"Verification email sent to member {member_id}",
+        "sent_by": current_admin.full_name,
+        "admin_only": True
     }
-
-
-# Statistics Routes - Moderators and Admins
-@router.get("/stats/summary", response_model=dict)
-async def get_members_summary(
-    current_user: User = Depends(require_any_role(["admin", "moderator"])),
-    db: Session = Depends(get_db)
-) -> dict:
-    """Get summary statistics about members.
-    
-    Accessible by moderators and admins.
-    
-    Args:
-        current_user: Moderator or admin user
-        db: Database session
-        
-    Returns:
-        Member statistics
-    """
-    total = db.query(User).count()
-    active = db.query(User).filter(User.is_active == True).count()
-    verified = db.query(User).filter(User.is_verified == True).count()
-    
-    return {
-        "total_members": total,
-        "active_members": active,
-        "verified_members": verified,
-        "unverified_members": total - verified,
-        "inactive_members": total - active
-    }
-

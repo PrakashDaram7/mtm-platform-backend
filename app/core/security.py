@@ -6,7 +6,7 @@ from typing import Optional, List, Dict
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
@@ -143,7 +143,7 @@ def verify_access_token(token: str) -> TokenData:
         )
 
 
-async def get_current_user(credentials: HTTPAuthCredentials = Depends(security)) -> TokenData:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> TokenData:
     """Get current user from JWT token.
     
     Args:

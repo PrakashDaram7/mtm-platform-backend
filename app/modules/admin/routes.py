@@ -1,95 +1,92 @@
-"""Admin module routes with role-based access control.
+"""Admin module routes with role-based access control."""
 
-This module demonstrates how to protect routes using RBAC.
-All routes in this module require admin privileges.
-
-Protection Methods:
-1. require_admin - Dependency for admin-only routes
-2. require_any_role - Routes accessible by multiple roles
-3. require_permission - Fine-grained permission control
-4. require_authenticated - Any authenticated user
-"""
-
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.security import (
     get_db,
+    get_user_from_db,
+)
+from app.core.rbac_middleware import (
     require_admin,
-    require_any_role,
-    require_permission,
-    require_authenticated,
-    get_current_authenticated_user,
-    RBACService,
+    RBACMiddleware,
 )
-from app.modules.auth.models import User, Role, Permission
+from app.modules.auth.models import User, Role
+from app.modules.auth.schemas import UserResponseSchema
 
 
-router = APIRouter(
-    prefix="/api/admin",
-    tags=["Admin Management"],
-    dependencies=[Depends(require_admin)]  # All routes require admin role
-)
+router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
 
-# User Management Routes (Admin Only)
-@router.get("/users", response_model=List[dict])
+# ============================================================================
+# USER MANAGEMENT ENDPOINTS (Admin Only)
+# ============================================================================
+
+@router.get("/users", dependencies=[Depends(require_admin)])
 async def list_all_users(
-    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100
-) -> List[dict]:
-    """List all users in the system.
-    
-    Only accessible by admin role.
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    role_filter: Optional[str] = None,
+    is_active: Optional[bool] = None
+) -> list:
+    """List all users with optional filtering (admin only).
     
     Args:
-        current_user: Admin user from dependency
         db: Database session
         skip: Number of records to skip
-        limit: Maximum records to return
+        limit: Maximum number of records to return
+        role_filter: Filter by role name
+        is_active: Filter by active status
         
     Returns:
-        List of user data
+        List of users with their details
     """
-    users = db.query(User).offset(skip).limit(limit).all()
+    query = db.query(User)
+    
+    if role_filter:
+        query = query.join(Role).filter(Role.role_name == role_filter)
+    
+    if is_active is not None:
+        query = query.filter(User.is_active == is_active)
+    
+    users = query.offset(skip).limit(limit).all()
     
     return [
         {
             "id": user.id,
             "full_name": user.full_name,
             "email": user.email,
+            "phone": user.phone,
             "is_active": user.is_active,
             "is_verified": user.is_verified,
-            "role": user.role.role_name if user.role else None,
-            "created_at": user.created_at
+            "last_login": user.last_login,
+            "role_name": user.role.role_name if user.role else None,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at
         }
         for user in users
     ]
 
 
-@router.get("/users/{user_id}", response_model=dict)
+@router.get("/users/{user_id}", dependencies=[Depends(require_admin)])
 async def get_user_details(
     user_id: str,
-    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ) -> dict:
-    """Get details of a specific user.
-    
-    Only accessible by admin role.
+    """Get detailed information for a specific user (admin only).
     
     Args:
-        user_id: ID of the user to retrieve
-        current_user: Admin user from dependency
+        user_id: User ID
         db: Database session
         
     Returns:
-        User details with role and permissions
+        User details including role and permissions
     """
-    user = db.query(User).filter(User.id == user_id).first()
+    user = get_user_from_db(user_id, db)
     
     if not user:
         raise HTTPException(
@@ -97,8 +94,17 @@ async def get_user_details(
             detail="User not found"
         )
     
-    # Get user's permissions
-    permissions = RBACService.get_user_permissions(user) if user.role else []
+    permissions = []
+    if user.role and user.role.permissions:
+        permissions = [
+            {
+                "permission_name": perm.permission_name,
+                "resource": perm.resource,
+                "action": perm.action,
+                "description": perm.description
+            }
+            for perm in user.role.permissions
+        ]
     
     return {
         "id": user.id,
@@ -107,49 +113,60 @@ async def get_user_details(
         "phone": user.phone,
         "is_active": user.is_active,
         "is_verified": user.is_verified,
-        "role": user.role.role_name if user.role else None,
-        "permissions": permissions,
+        "last_login": user.last_login,
         "created_at": user.created_at,
         "updated_at": user.updated_at,
-        "last_login": user.last_login
+        "role": {
+            "role_id": user.role.role_id if user.role else None,
+            "role_name": user.role.role_name if user.role else None,
+            "description": user.role.description if user.role else None,
+            "permissions": permissions
+        }
     }
 
 
-@router.patch("/users/{user_id}/role", response_model=dict)
+@router.put("/users/{user_id}/role")
 async def update_user_role(
     user_id: str,
-    role_id: str,
-    current_user: User = Depends(require_admin),
+    role_name: str,
+    current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ) -> dict:
-    """Update a user's role.
-    
-    Only accessible by admin role.
+    """Update a user's role (admin only).
     
     Args:
-        user_id: ID of the user to update
-        role_id: ID of the new role
-        current_user: Admin user from dependency
+        user_id: User ID to update
+        role_name: New role name
+        current_admin: Current admin user
         db: Database session
         
     Returns:
-        Updated user data
+        Updated user information
     """
-    user = db.query(User).filter(User.id == user_id).first()
+    if user_id == current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot change your own role"
+        )
+    
+    user = get_user_from_db(user_id, db)
+    
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
     
-    role = db.query(Role).filter(Role.role_id == role_id).first()
+    role = db.query(Role).filter(Role.role_name == role_name).first()
+    
     if not role:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role not found"
+            detail=f"Role '{role_name}' not found"
         )
     
-    user.role_id = role_id
+    user.role_id = role.role_id
+    user.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(user)
     
@@ -157,39 +174,44 @@ async def update_user_role(
         "id": user.id,
         "full_name": user.full_name,
         "email": user.email,
-        "role": role.role_name,
-        "message": f"User role updated to {role.role_name}"
+        "previous_role": user.role.role_name if user.role else None,
+        "new_role": role.role_name,
+        "updated_at": user.updated_at
     }
 
 
-@router.patch("/users/{user_id}/status", response_model=dict)
-async def toggle_user_active_status(
+@router.post("/users/{user_id}/activate")
+async def activate_user(
     user_id: str,
-    is_active: bool,
-    current_user: User = Depends(require_admin),
+    current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ) -> dict:
-    """Activate or deactivate a user account.
-    
-    Only accessible by admin role.
+    """Activate a disabled user account (admin only).
     
     Args:
-        user_id: ID of the user to update
-        is_active: New active status
-        current_user: Admin user from dependency
+        user_id: User ID to activate
+        current_admin: Current admin user
         db: Database session
         
     Returns:
-        Updated user data
+        Updated user information
     """
-    user = db.query(User).filter(User.id == user_id).first()
+    user = get_user_from_db(user_id, db)
+    
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
     
-    user.is_active = is_active
+    if user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User account is already active"
+        )
+    
+    user.is_active = True
+    user.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(user)
     
@@ -198,62 +220,125 @@ async def toggle_user_active_status(
         "full_name": user.full_name,
         "email": user.email,
         "is_active": user.is_active,
-        "message": f"User {'activated' if is_active else 'deactivated'}"
+        "updated_at": user.updated_at
     }
 
 
-@router.delete("/users/{user_id}", status_code=status.HTTP_200_OK)
-async def delete_user(
+@router.post("/users/{user_id}/deactivate")
+async def deactivate_user(
     user_id: str,
-    current_user: User = Depends(require_admin),
+    reason: Optional[str] = None,
+    current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ) -> dict:
-    """Delete a user from the system.
-    
-    Only accessible by admin role.
+    """Deactivate a user account (admin only).
     
     Args:
-        user_id: ID of the user to delete
-        current_user: Admin user from dependency
+        user_id: User ID to deactivate
+        reason: Reason for deactivation (optional)
+        current_admin: Current admin user
         db: Database session
         
     Returns:
-        Confirmation message
+        Updated user information
     """
-    user = db.query(User).filter(User.id == user_id).first()
+    if user_id == current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate your own account"
+        )
+    
+    user = get_user_from_db(user_id, db)
+    
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
     
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User account is already inactive"
+        )
+    
+    user.is_active = False
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+    
+    return {
+        "id": user.id,
+        "full_name": user.full_name,
+        "email": user.email,
+        "is_active": user.is_active,
+        "deactivation_reason": reason,
+        "updated_at": user.updated_at
+    }
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+) -> dict:
+    """Delete a user permanently (admin only).
+    
+    Args:
+        user_id: User ID to delete
+        current_admin: Current admin user
+        db: Database session
+        
+    Returns:
+        Deletion confirmation
+    """
+    if user_id == current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+    
+    user = get_user_from_db(user_id, db)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    user_email = user.email
     db.delete(user)
     db.commit()
     
     return {
-        "message": f"User {user.email} has been deleted",
-        "deleted_user_id": user_id
+        "message": "User deleted successfully",
+        "deleted_user_email": user_email,
+        "user_id": user_id
     }
 
 
-# Role Management Routes (Admin Only)
-@router.get("/roles", response_model=List[dict])
+# ============================================================================
+# ROLE MANAGEMENT ENDPOINTS (Admin Only)
+# ============================================================================
+
+@router.get("/roles", dependencies=[Depends(require_admin)])
 async def list_all_roles(
-    current_user: User = Depends(require_admin),
-    db: Session = Depends(get_db)
-) -> List[dict]:
-    """List all roles in the system.
-    
-    Only accessible by admin role.
+    db: Session = Depends(get_db),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100)
+) -> list:
+    """List all available roles (admin only).
     
     Args:
-        current_user: Admin user from dependency
         db: Database session
+        skip: Number of records to skip
+        limit: Maximum number of records to return
         
     Returns:
-        List of roles with permission count
+        List of roles with permissions
     """
-    roles = db.query(Role).all()
+    roles = db.query(Role).offset(skip).limit(limit).all()
     
     return [
         {
@@ -261,45 +346,40 @@ async def list_all_roles(
             "role_name": role.role_name,
             "description": role.description,
             "is_active": role.is_active,
-            "permission_count": len(role.permissions),
-            "created_at": role.created_at
+            "permissions_count": len(role.permissions) if role.permissions else 0,
+            "user_count": len(role.users) if role.users else 0,
+            "created_at": role.created_at,
+            "updated_at": role.updated_at
         }
         for role in roles
     ]
 
 
-@router.get("/roles/{role_id}", response_model=dict)
+@router.get("/roles/{role_name}", dependencies=[Depends(require_admin)])
 async def get_role_details(
-    role_id: str,
-    current_user: User = Depends(require_admin),
+    role_name: str,
     db: Session = Depends(get_db)
 ) -> dict:
-    """Get details of a specific role with all permissions.
-    
-    Only accessible by admin role.
+    """Get detailed information for a specific role (admin only).
     
     Args:
-        role_id: ID of the role to retrieve
-        current_user: Admin user from dependency
+        role_name: Role name
         db: Database session
         
     Returns:
-        Role details with associated permissions
+        Role details with permissions and associated users
     """
-    role = db.query(Role).filter(Role.role_id == role_id).first()
+    role = db.query(Role).filter(Role.role_name == role_name).first()
     
     if not role:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role not found"
+            detail=f"Role '{role_name}' not found"
         )
     
-    return {
-        "role_id": role.role_id,
-        "role_name": role.role_name,
-        "description": role.description,
-        "is_active": role.is_active,
-        "permissions": [
+    permissions = []
+    if role.permissions:
+        permissions = [
             {
                 "permission_id": perm.permission_id,
                 "permission_name": perm.permission_name,
@@ -308,118 +388,110 @@ async def get_role_details(
                 "description": perm.description
             }
             for perm in role.permissions
-        ],
-        "user_count": len(role.users),
-        "created_at": role.created_at
-    }
-
-
-@router.post("/roles", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def create_role(
-    role_name: str,
-    description: str = None,
-    current_user: User = Depends(require_admin),
-    db: Session = Depends(get_db)
-) -> dict:
-    """Create a new role.
+        ]
     
-    Only accessible by admin role.
-    
-    Args:
-        role_name: Name of the new role
-        description: Role description
-        current_user: Admin user from dependency
-        db: Database session
-        
-    Returns:
-        Created role data
-    """
-    # Check if role already exists
-    existing_role = db.query(Role).filter(Role.role_name == role_name).first()
-    if existing_role:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Role '{role_name}' already exists"
-        )
-    
-    new_role = Role(
-        role_name=role_name,
-        description=description,
-        is_active=True
-    )
-    
-    db.add(new_role)
-    db.commit()
-    db.refresh(new_role)
+    users = []
+    if role.users:
+        users = [
+            {
+                "user_id": user.id,
+                "full_name": user.full_name,
+                "email": user.email
+            }
+            for user in role.users
+        ]
     
     return {
-        "role_id": new_role.role_id,
-        "role_name": new_role.role_name,
-        "description": new_role.description,
-        "is_active": new_role.is_active,
-        "message": f"Role '{role_name}' created successfully"
+        "role_id": role.role_id,
+        "role_name": role.role_name,
+        "description": role.description,
+        "is_active": role.is_active,
+        "created_at": role.created_at,
+        "updated_at": role.updated_at,
+        "permissions": permissions,
+        "users": users,
+        "user_count": len(users)
     }
 
 
-# System Statistics Routes
-@router.get("/statistics", response_model=dict)
+# ============================================================================
+# SYSTEM STATISTICS ENDPOINTS (Admin Only)
+# ============================================================================
+
+@router.get("/stats/summary", dependencies=[Depends(require_admin)])
 async def get_system_statistics(
-    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ) -> dict:
-    """Get system-wide statistics.
-    
-    Only accessible by admin role.
+    """Get system statistics summary (admin only).
     
     Args:
-        current_user: Admin user from dependency
         db: Database session
         
     Returns:
-        System statistics
+        System statistics including user counts, role distribution
     """
     total_users = db.query(User).count()
     active_users = db.query(User).filter(User.is_active == True).count()
     verified_users = db.query(User).filter(User.is_verified == True).count()
-    total_roles = db.query(Role).count()
+    
+    role_distribution = []
+    roles = db.query(Role).all()
+    for role in roles:
+        role_user_count = db.query(User).filter(User.role_id == role.role_id).count()
+        role_distribution.append({
+            "role_name": role.role_name,
+            "user_count": role_user_count
+        })
     
     return {
         "total_users": total_users,
         "active_users": active_users,
-        "verified_users": verified_users,
         "inactive_users": total_users - active_users,
-        "total_roles": total_roles,
-        "timestamp": "datetime"
+        "verified_users": verified_users,
+        "unverified_users": total_users - verified_users,
+        "role_distribution": role_distribution,
+        "timestamp": datetime.utcnow()
     }
 
 
-@router.get("/audit-log", response_model=List[dict])
-async def get_audit_log(
-    current_user: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-    limit: int = 50
-) -> List[dict]:
-    """Get admin action audit log.
-    
-    Only accessible by admin role.
-    
-    Note: This is a placeholder. Implement actual audit logging as needed.
+@router.get("/stats/users/activity", dependencies=[Depends(require_admin)])
+async def get_user_activity_stats(
+    db: Session = Depends(get_db)
+) -> dict:
+    """Get user activity statistics (admin only).
     
     Args:
-        current_user: Admin user from dependency
         db: Database session
-        limit: Number of log entries to retrieve
         
     Returns:
-        List of audit log entries
+        User activity statistics
     """
-    return [
-        {
-            "id": "1",
-            "action": "User role updated",
-            "admin": current_user.email,
-            "target": "user@example.com",
-            "details": "Role changed from user to moderator",
-            "timestamp": "2024-02-16T10:30:00Z"
+    total_users = db.query(User).count()
+    
+    # Count users by verification status
+    verified = db.query(User).filter(User.is_verified == True).count()
+    unverified = db.query(User).filter(User.is_verified == False).count()
+    
+    # Count users by active status
+    active = db.query(User).filter(User.is_active == True).count()
+    inactive = db.query(User).filter(User.is_active == False).count()
+    
+    # Count users with/without last login
+    with_login = db.query(User).filter(User.last_login != None).count()
+    without_login = db.query(User).filter(User.last_login == None).count()
+    
+    return {
+        "total_users": total_users,
+        "verification": {
+            "verified": verified,
+            "unverified": unverified
+        },
+        "status": {
+            "active": active,
+            "inactive": inactive
+        },
+        "activity": {
+            "logged_in": with_login,
+            "never_logged_in": without_login
         }
-    ]
+    }

@@ -72,16 +72,18 @@ async def health_check():
 # Include auth router
 app.include_router(auth_router)
 
-# Include other module routers
+# Include other module routes
 from app.modules.admin.routes import router as admin_router
 from app.modules.members.routes import router as members_router
-# from app.modules.events.routes import router as events_router
-# from app.modules.payments.routes import router as payments_router
-# from app.modules.notifications.routes import router as notifications_router
+from app.modules.events.routes import router as events_router
+from app.modules.payments.routes import router as payments_router
+from app.modules.notifications.routes import router as notifications_router
 
 app.include_router(admin_router)
 app.include_router(members_router)
-# app.include_router(notifications_router)
+app.include_router(events_router)
+app.include_router(payments_router)
+app.include_router(notifications_router)
 
 
 if __name__ == "__main__":
@@ -90,7 +92,7 @@ if __name__ == "__main__":
     print("\n🚀 Starting MTM Platform Backend Server...\n")
     uvicorn.run(
         "main:app",
-        host="192.168.0.231",
+        host="0.0.0.0",
         port=8000,
         reload=True  # Enable auto-reload on code changes
     )
