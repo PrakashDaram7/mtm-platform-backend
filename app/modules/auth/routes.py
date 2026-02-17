@@ -23,11 +23,16 @@ from app.modules.auth.schemas import (
     UserLoginSchema,
     UserRegisterSchema,
     TokenResponseSchema,
+    ChangePasswordSchema,
+    SendOTPRequest,
+    VerifyOTPRequest,
+)
+from app.modules.admin.schemas import (
     UserResponseSchema,
     UserDetailSchema,
-    ChangePasswordSchema,
 )
-from app.modules.auth.services import OTPService, OTPType, UserService
+from app.modules.auth.services import OTPService, OTPType
+from app.core.email_service import EmailService
 
 router = APIRouter(
     prefix="/auth",
@@ -336,42 +341,67 @@ async def moderator_panel(
 # ==================== OTP ROUTES ====================
 
 @router.post("/send-otp")
-async def send_otp(request: dict, db: Session = Depends(get_db)) -> dict:
-    """Send OTP to email for verification.
+async def send_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> dict:
+    """Send OTP via email or phone for verification.
     
     Args:
-        request: Dictionary with 'email' key
+        request: SendOTPRequest with either 'email' or 'phone'
         db: Database session
         
     Returns:
         Success message with expiry time
     """
-    email = request.get("email") if isinstance(request, dict) else None
+    email = request.email
+    phone = request.phone
     
-    if not email:
+    # Validate that either email or phone is provided (Pydantic already validates this)
+    if not email and not phone:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email is required"
+            detail="Either email or phone number must be provided"
         )
     
     try:
+        # If phone is provided, inform user that SMS OTP is not yet implemented
+        if phone and not email:
+            return {
+                "success": False,
+                "message": "OTP via phone/SMS is not yet implemented. Please use an email address to receive your OTP."
+            }
+        
+        # Use email for OTP
         otp = OTPService.generate_numeric_otp()
         otp_metadata = OTPService.store_otp(
             identifier=email,
             otp=otp,
             otp_type=OTPType.EMAIL,
-            expiry_minutes=2,
-            phone=email
+            expiry_minutes=5,
+            phone=phone
         )
         
-        # TODO: Integrate email service to send OTP
-        print(f"OTP for {email}: {otp}")
+        # Send OTP via email
+        email_sent = EmailService.send_otp_email(email, otp)
+        
+        if not email_sent:
+            # Log OTP for debugging if email fails
+            print(f"⚠️ Failed to send email. OTP for {email}: {otp}")
+            return {
+                "success": False,
+                "message": "Failed to send OTP email. Please check your email configuration (EMAIL_HOST_USER and EMAIL_HOST_PASSWORD in .env). Check server logs for details."
+            }
+        
+        # Log successful OTP storage for debugging
+        print(f"✅ OTP stored for {email}: {otp_metadata}")
+        
+        # Mask email for security
+        masked_email = email[:2] + "***" + email[-10:] if len(email) > 12 else email[:1] + "***" + email[-1:]
         
         return {
             "success": True,
-            "message": f"OTP sent to {email}",
-            "expires_at": otp_metadata["expires_at"],
-            "ttl_seconds": otp_metadata["ttl_seconds"]
+            "message": f"OTP sent to {masked_email}",
+            "identifier": masked_email,
+            "expires_in_seconds": otp_metadata["ttl_seconds"],
+            "otp_type": "email"
         }
     except Exception as e:
         raise HTTPException(
@@ -381,21 +411,20 @@ async def send_otp(request: dict, db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/verify-otp")
-async def verify_otp(request: dict, db: Session = Depends(get_db)) -> dict:
-    """Verify OTP and create/update user after successful verification.
+async def verify_otp(request: VerifyOTPRequest, db: Session = Depends(get_db)) -> dict:
+    """Verify OTP and authenticate user or create new user on signup.
     
     Args:
-        request: Dictionary with 'email', 'otp', 'full_name', 'phone', 'password'
+        request: VerifyOTPRequest with 'email', 'otp', optional 'full_name', 'password'
         db: Database session
         
     Returns:
         Tokens and user data after successful verification
     """
-    email = request.get("email")
-    otp = request.get("otp")
-    full_name = request.get("full_name")
-    phone = request.get("phone")
-    password = request.get("password")
+    email = request.email
+    otp = request.otp
+    full_name = request.full_name
+    password = request.password
     
     if not all([email, otp]):
         raise HTTPException(
@@ -404,23 +433,30 @@ async def verify_otp(request: dict, db: Session = Depends(get_db)) -> dict:
         )
     
     try:
+        # Validate OTP
         is_valid, message = OTPService.validate_otp(email, otp)
         
         if not is_valid:
+            print(f"❌ OTP validation failed for {email}: {message}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=message
             )
         
+        print(f"✅ OTP validated successfully for {email}")
+        
         # Check if user exists
         existing_user = db.query(User).filter(User.email == email).first()
         
         if existing_user:
+            # User exists - this is a signin
             existing_user.is_verified = True
             db.commit()
             
             roles = [existing_user.role.role_name] if existing_user.role else ["user"]
             tokens = create_token_pair(existing_user.id, existing_user.email, roles)
+            
+            print(f"✅ User {email} signed in successfully")
             
             return {
                 "success": True,
@@ -431,51 +467,56 @@ async def verify_otp(request: dict, db: Session = Depends(get_db)) -> dict:
                 "role": existing_user.role.role_name if existing_user.role else "user",
                 **tokens
             }
-        
-        # Create new user if registration data provided
-        if full_name and password:
-            user_role = db.query(Role).filter(Role.role_name == "user").first()
-            if not user_role:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Default user role not found"
-                )
-            
-            new_user = User(
-                full_name=full_name,
-                email=email,
-                phone=phone,
-                password_hash=hash_password(password),
-                role_id=user_role.role_id,
-                is_active=True,
-                is_verified=True
-            )
-            
-            db.add(new_user)
-            db.commit()
-            db.refresh(new_user)
-            
-            roles = [user_role.role_name]
-            tokens = create_token_pair(new_user.id, new_user.email, roles)
-            
-            return {
-                "success": True,
-                "message": "User created and verified successfully",
-                "user_id": new_user.id,
-                "email": new_user.email,
-                "full_name": new_user.full_name,
-                "role": user_role.role_name,
-                **tokens
-            }
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Full name and password required for new registration"
-            )
+            # User doesn't exist - check if signup data provided
+            if full_name and password:
+                # Create new user
+                user_role = db.query(Role).filter(Role.role_name == "user").first()
+                if not user_role:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Default user role not found"
+                    )
+                
+                new_user = User(
+                    full_name=full_name,
+                    email=email,
+                    phone=request.phone,
+                    password_hash=hash_password(password),
+                    role_id=user_role.role_id,
+                    is_active=True,
+                    is_verified=True
+                )
+                
+                db.add(new_user)
+                db.commit()
+                db.refresh(new_user)
+                
+                roles = [user_role.role_name]
+                tokens = create_token_pair(new_user.id, new_user.email, roles)
+                
+                print(f"✅ New user {email} signed up and verified successfully")
+                
+                return {
+                    "success": True,
+                    "message": "User created and verified successfully",
+                    "user_id": new_user.id,
+                    "email": new_user.email,
+                    "full_name": new_user.full_name,
+                    "role": user_role.role_name,
+                    **tokens
+                }
+            else:
+                # No signup data provided and user doesn't exist
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User account not found. Please sign up first or provide full_name and password."
+                )
             
     except HTTPException:
         raise
     except Exception as e:
+        print(f"❌ OTP verification error for {email}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OTP verification failed: {str(e)}"
@@ -483,43 +524,66 @@ async def verify_otp(request: dict, db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/resend-otp")
-async def resend_otp(request: dict, db: Session = Depends(get_db)) -> dict:
-    """Resend OTP to email.
+async def resend_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> dict:
+    """Resend OTP via email or phone.
     
     Args:
-        request: Dictionary with 'email' key
+        request: SendOTPRequest with either 'email' or 'phone'
         db: Database session
         
     Returns:
         Success message with expiry time
     """
-    email = request.get("email") if isinstance(request, dict) else None
+    email = request.email
+    phone = request.phone
     
-    if not email:
+    # Validate that either email or phone is provided
+    if not email and not phone:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email is required"
+            detail="Either email or phone number must be provided"
         )
     
     try:
+        # If phone is provided, inform user that SMS OTP is not yet implemented
+        if phone and not email:
+            return {
+                "success": False,
+                "message": "OTP via phone/SMS is not yet implemented. Please use an email address to receive your OTP."
+            }
+        
+        # Use email for OTP
         otp = OTPService.generate_numeric_otp()
         
         otp_metadata = OTPService.store_otp(
             identifier=email,
             otp=otp,
             otp_type=OTPType.EMAIL,
-            expiry_minutes=2,
-            phone=email
+            expiry_minutes=5,
+            phone=phone
         )
         
-        # TODO: Integrate email service to resend OTP
-        print(f"Resent OTP for {email}: {otp}")
+        # Send OTP via email
+        email_sent = EmailService.send_otp_email(email, otp)
+        
+        if not email_sent:
+            print(f"⚠️ Failed to resend email. OTP for {email}: {otp}")
+            return {
+                "success": False,
+                "message": "Failed to resend OTP email. Please check your email configuration (EMAIL_HOST_USER and EMAIL_HOST_PASSWORD in .env). Check server logs for details."
+            }
+        
+        print(f"✅ OTP resent for {email}: {otp_metadata}")
+        
+        # Mask email for security
+        masked_email = email[:2] + "***" + email[-10:] if len(email) > 12 else email[:1] + "***" + email[-1:]
         
         return {
             "success": True,
-            "message": f"OTP resent to {email}",
-            "expires_at": otp_metadata["expires_at"],
-            "ttl_seconds": otp_metadata["ttl_seconds"]
+            "message": f"OTP resent to {masked_email}",
+            "identifier": masked_email,
+            "expires_in_seconds": otp_metadata["ttl_seconds"],
+            "otp_type": "email"
         }
     except Exception as e:
         raise HTTPException(

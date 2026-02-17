@@ -30,5 +30,13 @@ REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 OTP_LENGTH = int(os.getenv("OTP_LENGTH", "6"))
 OTP_EXPIRY_MINUTES = int(os.getenv("OTP_EXPIRY_MINUTES", "2"))
 
+# Email Configuration (FastAPI SMTP - using smtplib)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() == "true"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "daramprakashkumar587@gmail.com").strip()
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "hyos fhti mehi fkgq").strip()
+EMAIL_FROM_ADDRESS = os.getenv("EMAIL_FROM_ADDRESS", "noreply@mtmplatform.com")
+
 # Server Configuration
 DEBUG = os.getenv("DEBUG", "True").lower() == "true"
