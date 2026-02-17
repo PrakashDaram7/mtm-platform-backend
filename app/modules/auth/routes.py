@@ -27,6 +27,7 @@ from app.modules.auth.schemas import (
     UserDetailSchema,
     ChangePasswordSchema,
 )
+from app.modules.auth.services import OTPService, OTPType, UserService
 
 router = APIRouter(
     prefix="/auth",
@@ -329,204 +330,199 @@ async def moderator_panel(
     }
 
 
-@router.get("/users")
-async def list_users(
-    current_user: TokenData = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 10
-) -> dict:
-    """List all users (admin only).
-    
-    Args:
-        current_user: Current authenticated user
-        db: Database session
-        skip: Number of records to skip
-        limit: Maximum number of records
-        
-    Returns:
-        List of users
-    """
-    user = get_user_from_db(current_user.user_id, db)
-    
-    if not user or not user_has_role(user, "admin"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. Admin role required."
-        )
-    
-    users = db.query(User).offset(skip).limit(limit).all()
-    total = db.query(User).count()
-    
-    return {
-        "total": total,
-        "skip": skip,
-        "limit": limit,
-        "users": [
-            {
-                "id": user.id,
-                "full_name": user.full_name,
-                "email": user.email,
-                "phone": user.phone,
-                "is_active": user.is_active,
-                "is_verified": user.is_verified,
-                "role_name": user.role.role_name if user.role else None,
-                "created_at": user.created_at.isoformat() if user.created_at else None
-            }
-            for user in users
-        ]
-    }
 
 
-@router.put("/users/{user_id}/role")
-async def update_user_role(
-    user_id: str,
-    role_data: dict,
-    current_user: TokenData = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> dict:
-    """Update user role (admin only).
+
+# ==================== OTP ROUTES ====================
+
+@router.post("/send-otp")
+async def send_otp(request: dict, db: Session = Depends(get_db)) -> dict:
+    """Send OTP to email for verification.
     
     Args:
-        user_id: User ID to update
-        role_data: Dictionary with 'role_name'
-        current_user: Current authenticated user (must be admin)
+        request: Dictionary with 'email' key
         db: Database session
         
     Returns:
-        Updated user data
+        Success message with expiry time
     """
-    admin = get_user_from_db(current_user.user_id, db)
+    email = request.get("email") if isinstance(request, dict) else None
     
-    if not admin or not user_has_role(admin, "admin"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. Admin role required."
-        )
-    
-    user = get_user_from_db(user_id, db)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    role_name = role_data.get("role_name")
-    if not role_name:
+    if not email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="role_name is required"
+            detail="Email is required"
         )
     
-    role = db.query(Role).filter(Role.role_name == role_name).first()
-    
-    if not role:
+    try:
+        otp = OTPService.generate_numeric_otp()
+        otp_metadata = OTPService.store_otp(
+            identifier=email,
+            otp=otp,
+            otp_type=OTPType.EMAIL,
+            expiry_minutes=2,
+            phone=email
+        )
+        
+        # TODO: Integrate email service to send OTP
+        print(f"OTP for {email}: {otp}")
+        
+        return {
+            "success": True,
+            "message": f"OTP sent to {email}",
+            "expires_at": otp_metadata["expires_at"],
+            "ttl_seconds": otp_metadata["ttl_seconds"]
+        }
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Role '{role_name}' not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send OTP: {str(e)}"
         )
-    
-    user.role_id = role.role_id
-    db.commit()
-    db.refresh(user)
-    
-    return {
-        "id": user.id,
-        "full_name": user.full_name,
-        "email": user.email,
-        "previous_role": user.role.role_name if user.role else None,
-        "new_role": role.role_name,
-        "success": True
-    }
 
 
-@router.post("/users/{user_id}/disable")
-async def disable_user(
-    user_id: str,
-    current_user: TokenData = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> dict:
-    """Disable a user account (admin only).
+@router.post("/verify-otp")
+async def verify_otp(request: dict, db: Session = Depends(get_db)) -> dict:
+    """Verify OTP and create/update user after successful verification.
     
     Args:
-        user_id: User ID to disable
-        current_user: Current authenticated user (must be admin)
+        request: Dictionary with 'email', 'otp', 'full_name', 'phone', 'password'
         db: Database session
         
     Returns:
-        Updated user data
+        Tokens and user data after successful verification
     """
-    admin = get_user_from_db(current_user.user_id, db)
+    email = request.get("email")
+    otp = request.get("otp")
+    full_name = request.get("full_name")
+    phone = request.get("phone")
+    password = request.get("password")
     
-    if not admin or not user_has_role(admin, "admin"):
+    if not all([email, otp]):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. Admin role required."
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email and OTP are required"
         )
     
-    user = get_user_from_db(user_id, db)
-    
-    if not user:
+    try:
+        is_valid, message = OTPService.validate_otp(email, otp)
+        
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=message
+            )
+        
+        # Check if user exists
+        existing_user = db.query(User).filter(User.email == email).first()
+        
+        if existing_user:
+            existing_user.is_verified = True
+            db.commit()
+            
+            roles = [existing_user.role.role_name] if existing_user.role else ["user"]
+            tokens = create_token_pair(existing_user.id, existing_user.email, roles)
+            
+            return {
+                "success": True,
+                "message": "OTP verified successfully",
+                "user_id": existing_user.id,
+                "email": existing_user.email,
+                "full_name": existing_user.full_name,
+                "role": existing_user.role.role_name if existing_user.role else "user",
+                **tokens
+            }
+        
+        # Create new user if registration data provided
+        if full_name and password:
+            user_role = db.query(Role).filter(Role.role_name == "user").first()
+            if not user_role:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Default user role not found"
+                )
+            
+            new_user = User(
+                full_name=full_name,
+                email=email,
+                phone=phone,
+                password_hash=hash_password(password),
+                role_id=user_role.role_id,
+                is_active=True,
+                is_verified=True
+            )
+            
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            
+            roles = [user_role.role_name]
+            tokens = create_token_pair(new_user.id, new_user.email, roles)
+            
+            return {
+                "success": True,
+                "message": "User created and verified successfully",
+                "user_id": new_user.id,
+                "email": new_user.email,
+                "full_name": new_user.full_name,
+                "role": user_role.role_name,
+                **tokens
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Full name and password required for new registration"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"OTP verification failed: {str(e)}"
         )
-    
-    user.is_active = False
-    db.commit()
-    db.refresh(user)
-    
-    return {
-        "id": user.id,
-        "full_name": user.full_name,
-        "email": user.email,
-        "is_active": user.is_active,
-        "success": True
-    }
 
 
-@router.post("/users/{user_id}/enable")
-async def enable_user(
-    user_id: str,
-    current_user: TokenData = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> dict:
-    """Enable a disabled user account (admin only).
+@router.post("/resend-otp")
+async def resend_otp(request: dict, db: Session = Depends(get_db)) -> dict:
+    """Resend OTP to email.
     
     Args:
-        user_id: User ID to enable
-        current_user: Current authenticated user (must be admin)
+        request: Dictionary with 'email' key
         db: Database session
         
     Returns:
-        Updated user data
+        Success message with expiry time
     """
-    admin = get_user_from_db(current_user.user_id, db)
+    email = request.get("email") if isinstance(request, dict) else None
     
-    if not admin or not user_has_role(admin, "admin"):
+    if not email:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. Admin role required."
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email is required"
         )
     
-    user = get_user_from_db(user_id, db)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+    try:
+        otp = OTPService.generate_numeric_otp()
+        
+        otp_metadata = OTPService.store_otp(
+            identifier=email,
+            otp=otp,
+            otp_type=OTPType.EMAIL,
+            expiry_minutes=2,
+            phone=email
         )
-    
-    user.is_active = True
-    db.commit()
-    db.refresh(user)
-    
-    return {
-        "id": user.id,
-        "full_name": user.full_name,
-        "email": user.email,
-        "is_active": user.is_active,
-        "success": True
-    }
-
+        
+        # TODO: Integrate email service to resend OTP
+        print(f"Resent OTP for {email}: {otp}")
+        
+        return {
+            "success": True,
+            "message": f"OTP resent to {email}",
+            "expires_at": otp_metadata["expires_at"],
+            "ttl_seconds": otp_metadata["ttl_seconds"]
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to resend OTP: {str(e)}"
+        )

@@ -73,12 +73,13 @@ async def health_check():
 # Include routers
 app.include_router(auth_router, prefix="/api", tags=["auth"])
 
-# Include test router for RBAC demonstrations
+# Include admin router
 try:
-    from app.modules.test.routes import router as test_router
-    app.include_router(test_router, tags=["testing"])
+    from app.modules.admin.routes import router as admin_router
+    app.include_router(admin_router, prefix="/api", tags=["admin"])
 except Exception as e:
-    print(f"Warning: Could not import test routes: {e}")
+    print(f"Warning: Could not import admin routes: {e}")
+
 
 
 if __name__ == "__main__":
