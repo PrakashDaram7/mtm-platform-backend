@@ -30,12 +30,7 @@ app.add_middleware(
 async def startup_event():
     """Initialize application on startup."""
     db_check = check_database_connection()
-    print(f"\n{'='*60}")
-    print(f"🚀 MTM Platform Backend - Startup Check")
-    print(f"{'='*60}")
-    print(f"Database Status: {db_check['status'].upper()}")
-    print(f"Message: {db_check['message']}")
-    print(f"{'='*60}\n")
+
     
     if db_check['status'] == "failure":
         print("⚠️  Warning: Database connection failed. Server is running but database features may not work.")
@@ -89,18 +84,10 @@ except Exception as e:
 if __name__ == "__main__":
     import uvicorn
     
-    print("\n" + "="*60)
-    print("🚀 Starting MTM Platform Backend Server")
-    print("="*60)
-    print("Debug: False")
-    print("Host: 0.0.0.0")
-    print("Port: 8000")
-    print("Docs: http://localhost:8000/docs")
-    print("="*60 + "\n")
-    
+
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="192.168.0.231",
         port=8000,
         reload=True
     )
