@@ -4,7 +4,7 @@ import json
 import secrets
 import string
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict
 from enum import Enum
 
@@ -150,7 +150,6 @@ class OTPService:
         return hashlib.sha256(otp.encode()).hexdigest()
 
     @staticmethod
-    @staticmethod
     def store_otp(
         identifier: str,
         otp: str,
@@ -172,7 +171,7 @@ class OTPService:
         Returns:
             Dictionary containing OTP metadata
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expiry_time = now + timedelta(minutes=expiry_minutes)
         expiry_seconds = expiry_minutes * 60
         
@@ -208,10 +207,25 @@ class OTPService:
         # Always store in Database as fallback
         db = SessionLocal()
         try:
-            phone_value = phone or identifier
+            # Always store both email and phone fields if available
+            email_value = None
+            phone_value = None
+            if otp_type == OTPType.EMAIL:
+                email_value = identifier
+                phone_value = phone
+            elif otp_type == OTPType.SMS:
+                phone_value = identifier
+                email_value = email_value if email_value else None
+            else:
+                # fallback, try to set both if possible
+                email_value = email_value if email_value else None
+                phone_value = phone if phone else None
+
             otp_record = OTP(
                 user_id=user_id,
+                email=email_value,
                 phone=phone_value,
+                otp_type=otp_type.value,
                 otp_code=otp,  # Store unhashed OTP code for validation
                 expires_at=expiry_time,
                 is_used=False,
@@ -219,7 +233,7 @@ class OTPService:
             db.add(otp_record)
             db.commit()
             db.refresh(otp_record)
-            print(f"✅ OTP stored in database with phone: {phone_value}, OTP ID: {otp_record.otp_id}")
+            print(f"✅ OTP stored in database with email: {email_value}, phone: {phone_value}, OTP ID: {otp_record.otp_id}")
         except Exception as e:
             db.rollback()
             print(f"❌ Failed to store OTP in database: {e}")
@@ -289,7 +303,7 @@ class OTPService:
 
                     # Mark as verified in Redis
                     otp_data["verified"] = True
-                    otp_data["verified_at"] = datetime.utcnow().isoformat()
+                    otp_data["verified_at"] = datetime.now(timezone.utc).isoformat()
 
                     # Update in Redis
                     ttl = redis_client.ttl(redis_key)
@@ -316,7 +330,7 @@ class OTPService:
         """Fallback validation from database when Redis is unavailable.
 
         Args:
-            identifier: Unique identifier (phone number)
+            identifier: Unique identifier (email or phone)
             otp: The OTP to validate
 
         Returns:
@@ -324,26 +338,48 @@ class OTPService:
         """
         db = SessionLocal()
         try:
-            # Find the most recent, unused OTP for this phone/identifier
-            print(f"🔍 Searching database for OTP with phone: {identifier}")
+            # Use timezone-aware UTC datetime
+            now_utc = datetime.now(timezone.utc)
             
+            # Find the most recent, unused OTP for this phone/identifier
+            print(f"🔍 Searching database for OTP with identifier: {identifier}, current time: {now_utc}")
+            
+            # Try to match by email or phone
             otp_record = db.query(OTP).filter(
-                OTP.phone == identifier,
-                OTP.is_used == False,
-                OTP.expires_at > datetime.utcnow()
+                ((OTP.phone == identifier) | (OTP.email == identifier)),
+                OTP.is_used == False
             ).order_by(OTP.created_at.desc()).first()
 
             if not otp_record:
                 print(f"❌ No valid OTP found in database for identifier: {identifier}")
                 # Debug: show all OTP records for this identifier
-                all_records = db.query(OTP).filter(OTP.phone == identifier).all()
+                all_records = db.query(OTP).filter((OTP.phone == identifier) | (OTP.email == identifier)).all()
                 print(f"   Found {len(all_records)} total OTP records for {identifier}")
                 for record in all_records:
-                    print(f"   - OTP ID: {record.otp_id}, Used: {record.is_used}, Expired: {record.expires_at < datetime.utcnow()}")
+                    try:
+                        # Ensure expires_at is timezone-aware for comparison
+                        expires_at = record.expires_at
+                        if expires_at.tzinfo is None:
+                            expires_at = expires_at.replace(tzinfo=timezone.utc)
+                        expired = expires_at < now_utc if expires_at else True
+                        print(f"   - OTP ID: {record.otp_id}, Code: {record.otp_code}, Used: {record.is_used}, Expired: {expired}, Expires at: {record.expires_at}")
+                    except Exception as e:
+                        print(f"   - OTP ID: {record.otp_id}, Error checking expiry: {str(e)}")
                 return False, "OTP not found or expired. Please request a new OTP."
+
+            # Check if OTP is expired - ensure timezone-aware comparison
+            expires_at = otp_record.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            
+            if expires_at < now_utc:
+                print(f"❌ OTP has expired at {expires_at}")
+                return False, "OTP has expired. Please request a new OTP."
 
             # Validate OTP
             print(f"✅ Found OTP record in database. Validating...")
+            print(f"   Stored OTP: {otp_record.otp_code}, Provided OTP: {otp}")
+            
             if otp_record.otp_code != otp:
                 print(f"❌ OTP mismatch. Expected: {otp_record.otp_code}, Got: {otp}")
                 return False, "Invalid OTP."
@@ -376,7 +412,7 @@ class OTPService:
         try:
             # Find the OTP record
             otp_record = db.query(OTP).filter(
-                OTP.phone == identifier,
+                ((OTP.phone == identifier) | (OTP.email == identifier)),
                 OTP.otp_code == otp,
                 OTP.is_used == False
             ).first()
@@ -405,19 +441,26 @@ class OTPService:
         """
         db = SessionLocal()
         try:
+            now_utc = datetime.now(timezone.utc)
             otp_record = db.query(OTP).filter(
-                OTP.phone == identifier,
-                OTP.expires_at > datetime.utcnow()
+                ((OTP.phone == identifier) | (OTP.email == identifier))
             ).order_by(OTP.created_at.desc()).first()
 
             if otp_record:
-                return {
-                    "otp_id": otp_record.otp_id,
-                    "phone": otp_record.phone,
-                    "is_used": otp_record.is_used,
-                    "created_at": otp_record.created_at.isoformat(),
-                    "expires_at": otp_record.expires_at.isoformat(),
-                }
+                # Ensure expires_at is timezone-aware for comparison
+                expires_at = otp_record.expires_at
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                
+                # Only return if not expired
+                if expires_at > now_utc:
+                    return {
+                        "otp_id": otp_record.otp_id,
+                        "phone": otp_record.phone,
+                        "is_used": otp_record.is_used,
+                        "created_at": otp_record.created_at.isoformat(),
+                        "expires_at": otp_record.expires_at.isoformat(),
+                    }
             return None
         except Exception as e:
             print(f"Warning: Failed to fetch OTP from database: {e}")
@@ -473,7 +516,7 @@ class OTPService:
         # Fallback: Clear from database
         db = SessionLocal()
         try:
-            db.query(OTP).filter(OTP.phone == identifier).delete()
+            db.query(OTP).filter((OTP.phone == identifier) | (OTP.email == identifier)).delete()
             db.commit()
             return True
         except Exception:
@@ -517,12 +560,12 @@ class OTPService:
         db = SessionLocal()
         try:
             otp_record = db.query(OTP).filter(
-                OTP.phone == identifier,
+                ((OTP.phone == identifier) | (OTP.email == identifier)),
                 OTP.is_used == False
             ).order_by(OTP.created_at.desc()).first()
             
             if otp_record:
-                ttl_seconds = max(0, int((otp_record.expires_at - datetime.utcnow()).total_seconds()))
+                ttl_seconds = max(0, int((otp_record.expires_at - datetime.now(timezone.utc)).total_seconds()))
                 return {
                     "otp_type": "email",
                     "created_at": otp_record.created_at.isoformat(),
@@ -560,14 +603,15 @@ class OTPService:
         # Fallback to database
         db = SessionLocal()
         try:
+            now_utc = datetime.now(timezone.utc)
             otp_record = db.query(OTP).filter(
-                OTP.phone == identifier,
+                ((OTP.phone == identifier) | (OTP.email == identifier)),
                 OTP.is_used == False,
-                OTP.expires_at > datetime.utcnow()
+                OTP.expires_at > now_utc
             ).first()
             
             if otp_record:
-                ttl_seconds = int((otp_record.expires_at - datetime.utcnow()).total_seconds())
+                ttl_seconds = int((otp_record.expires_at - now_utc).total_seconds())
                 return ttl_seconds if ttl_seconds > 0 else None
         except Exception:
             pass

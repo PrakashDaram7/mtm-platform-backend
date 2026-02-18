@@ -136,12 +136,24 @@ class AdminUserService:
                     "user": None
                 }
             
+            # Validate and hash password if provided
+            password_hash = None
+            if password:
+                try:
+                    password_hash = hash_password(password)
+                except ValueError as e:
+                    return {
+                        "success": False,
+                        "message": str(e),
+                        "user": None
+                    }
+            
             # Create user
             new_user = User(
                 full_name=full_name,
                 email=email,
                 phone=phone,
-                password_hash=hash_password(password) if password else None,
+                password_hash=password_hash,
                 role_id=role.role_id,
                 is_active=True,
                 is_verified=False

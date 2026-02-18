@@ -68,12 +68,24 @@ async def register(user_data: UserRegisterSchema, db: Session = Depends(get_db))
             detail="Default user role not found. Please initialize default roles."
         )
     
+    # Trim and validate password
+    password = user_data.password.strip() if user_data.password else user_data.password
+    
+    try:
+        password_hash = hash_password(password)
+    except ValueError as e:
+        print(f"❌ Password validation error for {user_data.email}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    
     # Create new user
     new_user = User(
         full_name=user_data.full_name,
         email=user_data.email,
         phone=user_data.phone,
-        password_hash=hash_password(user_data.password),
+        password_hash=password_hash,
         role_id=user_role.role_id,
         is_active=True,
         is_verified=False
@@ -264,7 +276,19 @@ async def change_password(
             detail="New password and confirm password do not match"
         )
     
-    user.password_hash = hash_password(password_data.new_password)
+    # Trim and validate new password
+    new_password = password_data.new_password.strip() if password_data.new_password else password_data.new_password
+    
+    try:
+        password_hash = hash_password(new_password)
+    except ValueError as e:
+        print(f"❌ Password validation error for user {current_user.user_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    
+    user.password_hash = password_hash
     db.commit()
     
     return {
@@ -340,68 +364,115 @@ async def moderator_panel(
 
 # ==================== OTP ROUTES ====================
 
-@router.post("/send-otp")
-async def send_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> dict:
-    """Send OTP via email or phone for verification.
-    
-    Args:
-        request: SendOTPRequest with either 'email' or 'phone'
-        db: Database session
-        
-    Returns:
-        Success message with expiry time
-    """
+@router.post("/signup-send-otp")
+async def signup_send_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> dict:
+    """Send OTP for signup. Only for new users (email must not exist)."""
     email = request.email
-    phone = request.phone
+    otp_type = request.otp_type
+
+    # Require email for signup
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required for signup")
     
-    # Validate that either email or phone is provided (Pydantic already validates this)
-    if not email and not phone:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either email or phone number must be provided"
-        )
-    
+    if otp_type not in ["email", "sms"]:
+        raise HTTPException(status_code=400, detail="otp_type must be 'email' or 'sms'")
+
+    # Check if user already exists
+    existing_user = db.query(User).filter(User.email == email).first()
+    if existing_user:
+        return {"success": False, "message": "Email already registered. Please sign in instead.", "account_exists": True}
+
     try:
-        # If phone is provided, inform user that SMS OTP is not yet implemented
-        if phone and not email:
-            return {
-                "success": False,
-                "message": "OTP via phone/SMS is not yet implemented. Please use an email address to receive your OTP."
-            }
-        
-        # Use email for OTP
         otp = OTPService.generate_numeric_otp()
         otp_metadata = OTPService.store_otp(
             identifier=email,
             otp=otp,
-            otp_type=OTPType.EMAIL,
+            otp_type=OTPType.EMAIL if otp_type == "email" else OTPType.SMS,
             expiry_minutes=5,
-            phone=phone
         )
-        
+
         # Send OTP via email
-        email_sent = EmailService.send_otp_email(email, otp)
-        
-        if not email_sent:
-            # Log OTP for debugging if email fails
-            print(f"⚠️ Failed to send email. OTP for {email}: {otp}")
-            return {
-                "success": False,
-                "message": "Failed to send OTP email. Please check your email configuration (EMAIL_HOST_USER and EMAIL_HOST_PASSWORD in .env). Check server logs for details."
-            }
-        
-        # Log successful OTP storage for debugging
-        print(f"✅ OTP stored for {email}: {otp_metadata}")
-        
-        # Mask email for security
-        masked_email = email[:2] + "***" + email[-10:] if len(email) > 12 else email[:1] + "***" + email[-1:]
-        
+        if otp_type == "email":
+            email_sent = EmailService.send_otp_email(email, otp)
+            if not email_sent:
+                print(f"⚠️ Failed to send email. OTP for {email}: {otp}")
+                return {"success": False, "message": "Failed to send OTP email. Please check your email configuration."}
+            masked = email[:2] + "***" + email[-10:] if len(email) > 12 else email[:1] + "***" + email[-1:]
+        else:
+            return {"success": False, "message": "OTP via phone/SMS is not yet implemented. Please use email for signup."}
+
+        print(f"✅ Signup OTP sent for {email}: {otp_metadata}")
         return {
             "success": True,
-            "message": f"OTP sent to {masked_email}",
-            "identifier": masked_email,
+            "message": f"OTP sent to {masked}",
+            "identifier": masked,
             "expires_in_seconds": otp_metadata["ttl_seconds"],
-            "otp_type": "email"
+            "otp_type": otp_type
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send OTP: {str(e)}")
+
+
+@router.post("/send-otp")
+async def send_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> dict:
+    """Send OTP via email or phone for verification. Only for existing users."""
+    email = request.email
+    phone = request.phone
+    otp_type = request.otp_type
+
+    # Require otp_type
+    if otp_type not in ["email", "sms"]:
+        raise HTTPException(status_code=400, detail="otp_type must be 'email' or 'sms'")
+
+    # Check user existence and status
+    user = None
+    if otp_type == "email":
+        if not email:
+            raise HTTPException(status_code=400, detail="Email is required for email OTP")
+        user = db.query(User).filter(User.email == email).first()
+    elif otp_type == "sms":
+        if not phone:
+            raise HTTPException(status_code=400, detail="Phone is required for SMS OTP")
+        user = db.query(User).filter(User.phone == phone).first()
+
+    if not user:
+        return {"success": False, "message": f"No account found for the provided {otp_type}. Please sign up first."}
+    if not user.is_active:
+        return {"success": False, "message": "Account is disabled. Please contact support."}
+
+    # (Optional) If you want to block OTP for already verified users, add here
+    # if user.is_verified:
+    #     return {"success": False, "message": "Account already verified. Please login."}
+
+    try:
+        otp = OTPService.generate_numeric_otp()
+        otp_metadata = OTPService.store_otp(
+            identifier=email if otp_type == "email" else phone,
+            otp=otp,
+            otp_type=OTPType.EMAIL if otp_type == "email" else OTPType.SMS,
+            expiry_minutes=5,
+            phone=phone,
+        )
+
+        # Send OTP
+        if otp_type == "email":
+            email_sent = EmailService.send_otp_email(email, otp)
+            if not email_sent:
+                print(f"⚠️ Failed to send email. OTP for {email}: {otp}")
+                return {"success": False, "message": "Failed to send OTP email. Please check your email configuration."}
+            masked = email[:2] + "***" + email[-10:] if len(email) > 12 else email[:1] + "***" + email[-1:]
+        else:
+            # TODO: Implement SMS sending logic here
+            # For now, respond as not implemented
+            return {"success": False, "message": "OTP via phone/SMS is not yet implemented. Please use an email address to receive your OTP."}
+
+        print(f"✅ OTP stored for {email or phone}: {otp_metadata}")
+        return {
+            "success": True,
+            "message": f"OTP sent to {masked}",
+            "identifier": masked,
+            "expires_in_seconds": otp_metadata["ttl_seconds"],
+            "otp_type": otp_type
         }
     except Exception as e:
         raise HTTPException(
@@ -431,6 +502,10 @@ async def verify_otp(request: VerifyOTPRequest, db: Session = Depends(get_db)) -
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email and OTP are required"
         )
+    
+    # Trim password if provided
+    if password:
+        password = password.strip()
     
     try:
         # Validate OTP
@@ -470,6 +545,8 @@ async def verify_otp(request: VerifyOTPRequest, db: Session = Depends(get_db)) -
         else:
             # User doesn't exist - check if signup data provided
             if full_name and password:
+                print(f"📝 Creating new user: email={email}, full_name={full_name}, password_length={len(password)} chars, password_bytes={len(password.encode('utf-8'))} bytes")
+                
                 # Create new user
                 user_role = db.query(Role).filter(Role.role_name == "user").first()
                 if not user_role:
@@ -478,11 +555,20 @@ async def verify_otp(request: VerifyOTPRequest, db: Session = Depends(get_db)) -
                         detail="Default user role not found"
                     )
                 
+                try:
+                    password_hash = hash_password(password)
+                except ValueError as e:
+                    print(f"❌ Password validation error for {email}: {str(e)}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=str(e)
+                    )
+                
                 new_user = User(
                     full_name=full_name,
                     email=email,
                     phone=request.phone,
-                    password_hash=hash_password(password),
+                    password_hash=password_hash,
                     role_id=user_role.role_id,
                     is_active=True,
                     is_verified=True

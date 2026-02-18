@@ -44,8 +44,27 @@ def hash_password(password: str) -> str:
         
     Returns:
         Hashed password
+        
+    Raises:
+        ValueError: If password exceeds 72 bytes (bcrypt limit)
     """
-    return pwd_context.hash(password)
+    # Bcrypt has a 72-byte limit for passwords
+    if not isinstance(password, str):
+        raise ValueError("Password must be a string")
+    
+    byte_length = len(password.encode('utf-8'))
+    print(f"🔐 Hashing password: Length={len(password)} chars, Byte length={byte_length}")
+    
+    if byte_length > 72:
+        raise ValueError(f"Password is too long. Maximum 72 bytes allowed, got {byte_length} bytes.")
+    
+    try:
+        hashed = pwd_context.hash(password)
+        print(f"✅ Password hashed successfully")
+        return hashed
+    except Exception as e:
+        print(f"❌ Bcrypt hashing error: {str(e)}")
+        raise ValueError(f"Failed to hash password: {str(e)}")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
