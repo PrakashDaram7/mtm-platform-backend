@@ -6,6 +6,13 @@ from app.core.database import engine, Base
 from app.utils.helpers import check_database_connection
 from app.modules.auth.routes import router as auth_router
 
+# Import ALL models so SQLAlchemy knows about them and creates tables
+from app.modules.auth.models import User, Role, Permission, OTP
+from app.modules.events.models import Event, EventRegistration
+from app.modules.members.models import MembershipPlan, MemberSubscription
+from app.modules.notifications.models import Notification
+from app.modules.payments.models import Payment
+
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
@@ -101,6 +108,12 @@ try:
 except Exception as e:
     print(f"Warning: Could not import members routes: {e}")
 
+# Include events router
+try:
+    from app.modules.events.routes import router as events_router
+    app.include_router(events_router, prefix="/api", tags=["events"])
+except Exception as e:
+    print(f"Warning: Could not import events routes: {e}")
 
 
 if __name__ == "__main__":

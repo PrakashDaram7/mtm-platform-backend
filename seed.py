@@ -5,8 +5,17 @@ Uses existing database connection from app.core.database
 
 import uuid
 from app.core.database import SessionLocal
-from app.core.security import hash_password
-from app.modules.auth.models import Role, User, Permission
+from bcrypt import hashpw, gensalt
+
+# Direct hash to avoid circular import through security -> auth.models -> auth.__init__ -> routes
+def hash_password(plain: str) -> str:
+    return hashpw(plain.encode("utf-8"), gensalt()).decode("utf-8")
+
+# Import models directly (skip __init__.py)
+import app.modules.auth.models as auth_models
+Role = auth_models.Role
+User = auth_models.User
+Permission = auth_models.Permission
 
 
 def seed_roles(session):
@@ -192,6 +201,138 @@ def seed_users(session):
         raise
 
 
+def seed_membership_plans(session):
+    """Insert default membership plans."""
+    print("Seeding membership plans...")
+    from app.modules.members.models import MembershipPlan
+    import json
+
+    plans = [
+        {
+            "name": "Annual Membership",
+            "description": "Standard annual membership with full access to events and community features.",
+            "price": 1200.0,
+            "duration_months": 12,
+            "is_lifetime": False,
+            "features": json.dumps(["All events access", "Digital membership card", "Forum participation", "Learning resources", "Community directory"]),
+            "sort_order": 1,
+        },
+        {
+            "name": "Lifetime Membership",
+            "description": "One-time payment for lifetime access to all MTM platform features.",
+            "price": 10000.0,
+            "duration_months": None,
+            "is_lifetime": True,
+            "features": json.dumps(["Everything in Annual", "Lifetime access", "Priority event seating", "Exclusive badge", "Dedicated support"]),
+            "sort_order": 2,
+        },
+    ]
+
+    try:
+        for plan_data in plans:
+            existing = session.query(MembershipPlan).filter(MembershipPlan.name == plan_data["name"]).first()
+            if not existing:
+                plan = MembershipPlan(**plan_data)
+                session.add(plan)
+                print(f"  ✅ Created plan: {plan_data['name']}")
+            else:
+                print(f"  ⏭️  Plan already exists: {plan_data['name']}")
+        session.commit()
+    except Exception as e:
+        print(f"  ❌ Error seeding plans: {e}")
+        session.rollback()
+
+
+def seed_sample_events(session):
+    """Insert sample events for testing."""
+    print("Seeding sample events...")
+    from app.modules.events.models import Event
+    from datetime import datetime, timedelta
+
+    # Get an organizer user
+    organizer = session.query(User).join(Role).filter(Role.role_name == "organizer").first()
+    admin = session.query(User).join(Role).filter(Role.role_name == "admin").first()
+    organizer_id = organizer.id if organizer else (admin.id if admin else None)
+
+    if not organizer_id:
+        print("  ⚠️  No organizer/admin user found, skipping events.")
+        return
+
+    events_data = [
+        {
+            "title": "Ugadi Celebrations 2026",
+            "description": "Grand Telugu New Year celebration with cultural programs, traditional food, and community gathering.",
+            "event_type": "cultural",
+            "status": "published",
+            "start_date": datetime(2026, 3, 30, 10, 0),
+            "end_date": datetime(2026, 3, 30, 18, 0),
+            "location": "Hyderabad Convention Center, Madhapur",
+            "city": "Hyderabad",
+            "venue": "Hyderabad Convention Center",
+            "fee": 200.0,
+            "is_free": False,
+            "max_capacity": 500,
+        },
+        {
+            "title": "Telugu Literature Meet",
+            "description": "Meet Telugu authors and participate in literary discussions and book readings.",
+            "event_type": "education",
+            "status": "published",
+            "start_date": datetime(2026, 4, 10, 14, 0),
+            "end_date": datetime(2026, 4, 10, 18, 0),
+            "location": "Bangalore Public Library",
+            "city": "Bangalore",
+            "venue": "Bangalore Public Library",
+            "fee": 0.0,
+            "is_free": True,
+            "max_capacity": 200,
+        },
+        {
+            "title": "Telugu Cultural Night",
+            "description": "An evening of Telugu music, dance performances, and cultural showcase.",
+            "event_type": "cultural",
+            "status": "published",
+            "start_date": datetime(2026, 4, 14, 18, 0),
+            "end_date": datetime(2026, 4, 14, 22, 0),
+            "location": "Mumbai Community Hall",
+            "city": "Mumbai",
+            "venue": "Andheri Community Hall",
+            "fee": 350.0,
+            "is_free": False,
+            "max_capacity": 300,
+        },
+        {
+            "title": "Annual Mahasabha Conference 2026",
+            "description": "The flagship annual conference bringing together Telugu community leaders from around the world.",
+            "event_type": "conference",
+            "status": "published",
+            "start_date": datetime(2026, 6, 15, 9, 0),
+            "end_date": datetime(2026, 6, 16, 17, 0),
+            "location": "Bangalore International Centre",
+            "city": "Bangalore",
+            "venue": "Bangalore International Centre",
+            "fee": 500.0,
+            "is_free": False,
+            "max_capacity": 1000,
+        },
+    ]
+
+    try:
+        existing = session.query(Event).count()
+        if existing > 0:
+            print(f"  ⏭️  {existing} events already exist, skipping.")
+            return
+
+        for event_data in events_data:
+            event = Event(organizer_id=organizer_id, **event_data)
+            session.add(event)
+            print(f"  ✅ Created event: {event_data['title']}")
+        session.commit()
+    except Exception as e:
+        print(f"  ❌ Error seeding events: {e}")
+        session.rollback()
+
+
 def main():
     """Run all seeding operations."""
     print("="*60)
@@ -204,6 +345,8 @@ def main():
         seed_roles(session)
         seed_permissions(session)
         seed_users(session)
+        seed_membership_plans(session)
+        seed_sample_events(session)
         
         print("\n" + "="*60)
         print("✅ Database seeding completed successfully!")
@@ -225,3 +368,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
