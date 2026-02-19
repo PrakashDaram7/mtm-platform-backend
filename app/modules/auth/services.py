@@ -176,7 +176,7 @@ class OTPService:
         expiry_seconds = expiry_minutes * 60
         
         # Log OTP storage attempt
-        print(f"🔐 Storing OTP for identifier: {identifier}, type: {otp_type.value}, expiry: {expiry_minutes} min")
+        print(f"🔐 Storing OTP for identifier: {identifier}, otp: {otp}, type: {otp_type.value}, expiry: {expiry_minutes} min")
 
         otp_data = {
             "otp": OTPService._hash_otp(otp),

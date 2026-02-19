@@ -3,6 +3,7 @@
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.modules.auth.models import User, Role
 from app.core.security import hash_password
@@ -492,7 +493,7 @@ class AdminUserService:
             member_users = db.query(User).join(Role).filter(Role.role_name == "member").count()
             
             # Get role distribution
-            role_distribution = db.query(Role.role_name, db.func.count(User.id)).join(User, User.role_id == Role.id, isouter=True).group_by(Role.role_name).all()
+            role_distribution = db.query(Role.role_name, func.count(User.id)).join(User, User.role_id == Role.role_id, isouter=True).group_by(Role.role_name).all()
             
             return {
                 "success": True,

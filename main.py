@@ -80,6 +80,27 @@ try:
 except Exception as e:
     print(f"Warning: Could not import admin routes: {e}")
 
+# Include moderator router
+try:
+    from app.modules.moderator.routes import router as moderator_router
+    app.include_router(moderator_router, prefix="/api", tags=["moderator"])
+except Exception as e:
+    print(f"Warning: Could not import moderator routes: {e}")
+
+# Include organizer router
+try:
+    from app.modules.organizer.routes import router as organizer_router
+    app.include_router(organizer_router, prefix="/api", tags=["organizer"])
+except Exception as e:
+    print(f"Warning: Could not import organizer routes: {e}")
+
+# Include members router
+try:
+    from app.modules.members.routes import router as members_router
+    app.include_router(members_router, prefix="/api", tags=["members"])
+except Exception as e:
+    print(f"Warning: Could not import members routes: {e}")
+
 
 
 if __name__ == "__main__":
