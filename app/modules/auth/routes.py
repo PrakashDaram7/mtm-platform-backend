@@ -1,4 +1,13 @@
-"""Authentication routes with RBAC support."""
+"""Authentication routes — OTP-only authentication with RBAC support.
+
+Auth flow (PRD-aligned):
+  1. /signup-send-otp  → new users: send OTP to email
+  2. /send-otp         → existing users: send OTP to email
+  3. /verify-otp       → verify OTP → create user if new, issue tokens
+  4. /resend-otp       → resend OTP
+  5. /refresh           → refresh access token
+  6. /me               → get current user info
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -9,8 +18,6 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     create_token_pair,
-    verify_password,
-    hash_password,
     get_current_user,
     get_db,
     get_user_from_db,
@@ -20,10 +27,7 @@ from app.core.security import (
 )
 from app.modules.auth.models import User, Role, Permission
 from app.modules.auth.schemas import (
-    UserLoginSchema,
-    UserRegisterSchema,
     TokenResponseSchema,
-    ChangePasswordSchema,
     SendOTPRequest,
     VerifyOTPRequest,
 )
@@ -41,113 +45,7 @@ router = APIRouter(
 )
 
 
-@router.post("/register", response_model=UserResponseSchema, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserRegisterSchema, db: Session = Depends(get_db)) -> dict:
-    """Register a new user.
-    
-    Args:
-        user_data: User registration data
-        db: Database session
-        
-    Returns:
-        Created user data with user role
-    """
-    # Check if user already exists
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User with this email already exists"
-        )
-    
-    # Get default 'user' role
-    user_role = db.query(Role).filter(Role.role_name == "user").first()
-    if not user_role:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Default user role not found. Please initialize default roles."
-        )
-    
-    # Trim and validate password
-    password = user_data.password.strip() if user_data.password else user_data.password
-    
-    try:
-        password_hash = hash_password(password)
-    except ValueError as e:
-        print(f"❌ Password validation error for {user_data.email}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    
-    # Create new user
-    new_user = User(
-        full_name=user_data.full_name,
-        email=user_data.email,
-        phone=user_data.phone,
-        password_hash=password_hash,
-        role_id=user_role.role_id,
-        is_active=True,
-        is_verified=False
-    )
-    
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    return {
-        "id": new_user.id,
-        "full_name": new_user.full_name,
-        "email": new_user.email,
-        "phone": new_user.phone,
-        "is_active": new_user.is_active,
-        "is_verified": new_user.is_verified,
-        "role_name": user_role.role_name
-    }
-
-
-@router.post("/login", response_model=TokenResponseSchema)
-async def login(credentials: UserLoginSchema, db: Session = Depends(get_db)) -> dict:
-    """Login user and return access/refresh tokens.
-    
-    Args:
-        credentials: User login credentials (email and password)
-        db: Database session
-        
-    Returns:
-        Access and refresh tokens
-    """
-    user = db.query(User).filter(User.email == credentials.email).first()
-    
-    if not user or not verify_password(credentials.password, user.password_hash or ""):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is disabled"
-        )
-    
-    # Update last login
-    user.last_login = datetime.utcnow()
-    db.commit()
-    
-    # Get user roles
-    roles = [user.role.role_name] if user.role else ["user"]
-    
-    # Create tokens
-    access_token = create_access_token(user.id, user.email, roles)
-    refresh_token = create_refresh_token(user.id, user.email)
-    
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
-
+# ==================== TOKEN MANAGEMENT ====================
 
 @router.post("/refresh", response_model=TokenResponseSchema)
 async def refresh_token_endpoint(
@@ -191,7 +89,7 @@ async def refresh_token_endpoint(
                 detail="User not found"
             )
         
-        roles = [user.role.role_name] if user.role else ["user"]
+        roles = [user.role.role_name] if user.role else ["member"]
         access_token = create_access_token(user_id, email, roles)
         refresh_token_new = create_refresh_token(user_id, email)
         
@@ -206,6 +104,8 @@ async def refresh_token_endpoint(
             detail="Invalid or expired refresh token"
         )
 
+
+# ==================== USER INFO ====================
 
 @router.get("/me", response_model=UserDetailSchema)
 async def get_current_user_info(current_user: TokenData = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
@@ -237,63 +137,6 @@ async def get_current_user_info(current_user: TokenData = Depends(get_current_us
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "updated_at": user.updated_at.isoformat() if user.updated_at else None,
         "last_login": user.last_login.isoformat() if user.last_login else None
-    }
-
-
-@router.post("/change-password")
-async def change_password(
-    password_data: ChangePasswordSchema,
-    current_user: TokenData = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> dict:
-    """Change user password.
-    
-    Args:
-        password_data: Current and new password
-        current_user: Current authenticated user
-        db: Database session
-        
-    Returns:
-        Success message
-    """
-    user = get_user_from_db(current_user.user_id, db)
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    if not verify_password(password_data.current_password, user.password_hash or ""):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Current password is incorrect"
-        )
-    
-    if password_data.new_password != password_data.confirm_password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password and confirm password do not match"
-        )
-    
-    # Trim and validate new password
-    new_password = password_data.new_password.strip() if password_data.new_password else password_data.new_password
-    
-    try:
-        password_hash = hash_password(new_password)
-    except ValueError as e:
-        print(f"❌ Password validation error for user {current_user.user_id}: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    
-    user.password_hash = password_hash
-    db.commit()
-    
-    return {
-        "success": True,
-        "message": "Password changed successfully"
     }
 
 
@@ -335,15 +178,7 @@ async def moderator_panel(
     current_user: TokenData = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> dict:
-    """Moderator-only protected route - moderation panel.
-    
-    Args:
-        current_user: Current authenticated user
-        db: Database session
-        
-    Returns:
-        Moderator panel data
-    """
+    """Moderator-only protected route - moderation panel."""
     user = get_user_from_db(current_user.user_id, db)
     
     if not user or not user_has_any_role(user, ["admin", "moderator"]):
@@ -357,9 +192,6 @@ async def moderator_panel(
         "role": user.role.role_name if user.role else None,
         "status": "ready for moderation"
     }
-
-
-
 
 
 # ==================== OTP ROUTES ====================
@@ -395,13 +227,13 @@ async def signup_send_otp(request: SendOTPRequest, db: Session = Depends(get_db)
         if otp_type == "email":
             email_sent = EmailService.send_otp_email(email, otp)
             if not email_sent:
-                print(f"⚠️ Failed to send email. OTP for {email}: {otp}")
+                print(f"[WARN] Failed to send email. OTP for {email}: {otp}")
                 return {"success": False, "message": "Failed to send OTP email. Please check your email configuration."}
             masked = email[:2] + "***" + email[-10:] if len(email) > 12 else email[:1] + "***" + email[-1:]
         else:
             return {"success": False, "message": "OTP via phone/SMS is not yet implemented. Please use email for signup."}
 
-        print(f"✅ Signup OTP sent for {email}: {otp_metadata}")
+        print(f"[OK] Signup OTP sent for {email}: {otp_metadata}")
         return {
             "success": True,
             "message": f"OTP sent to {masked}",
@@ -440,10 +272,6 @@ async def send_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> di
     if not user.is_active:
         return {"success": False, "message": "Account is disabled. Please contact support."}
 
-    # (Optional) If you want to block OTP for already verified users, add here
-    # if user.is_verified:
-    #     return {"success": False, "message": "Account already verified. Please login."}
-
     try:
         otp = OTPService.generate_numeric_otp()
         otp_metadata = OTPService.store_otp(
@@ -458,15 +286,13 @@ async def send_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> di
         if otp_type == "email":
             email_sent = EmailService.send_otp_email(email, otp)
             if not email_sent:
-                print(f"⚠️ Failed to send email. OTP for {email}: {otp}")
+                print(f"[WARN] Failed to send email. OTP for {email}: {otp}")
                 return {"success": False, "message": "Failed to send OTP email. Please check your email configuration."}
             masked = email[:2] + "***" + email[-10:] if len(email) > 12 else email[:1] + "***" + email[-1:]
         else:
-            # TODO: Implement SMS sending logic here
-            # For now, respond as not implemented
             return {"success": False, "message": "OTP via phone/SMS is not yet implemented. Please use an email address to receive your OTP."}
 
-        print(f"✅ OTP stored for {email or phone}: {otp_metadata}")
+        print(f"[OK] OTP stored for {email or phone}: {otp_metadata}")
         return {
             "success": True,
             "message": f"OTP sent to {masked}",
@@ -485,17 +311,13 @@ async def send_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> di
 async def verify_otp(request: VerifyOTPRequest, db: Session = Depends(get_db)) -> dict:
     """Verify OTP and authenticate user or create new user on signup.
     
-    Args:
-        request: VerifyOTPRequest with 'email', 'otp', optional 'full_name', 'password'
-        db: Database session
-        
-    Returns:
-        Tokens and user data after successful verification
+    For existing users: verifies OTP, marks as verified, returns tokens.
+    For new users: requires full_name, verifies OTP, creates user, returns tokens.
+    No password required — authentication is entirely OTP-based.
     """
     email = request.email
     otp = request.otp
     full_name = request.full_name
-    password = request.password
     
     if not all([email, otp]):
         raise HTTPException(
@@ -503,35 +325,32 @@ async def verify_otp(request: VerifyOTPRequest, db: Session = Depends(get_db)) -
             detail="Email and OTP are required"
         )
     
-    # Trim password if provided
-    if password:
-        password = password.strip()
-    
     try:
         # Validate OTP
         is_valid, message = OTPService.validate_otp(email, otp)
         
         if not is_valid:
-            print(f"❌ OTP validation failed for {email}: {message}")
+            print(f"[ERROR] OTP validation failed for {email}: {message}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=message
             )
         
-        print(f"✅ OTP validated successfully for {email}")
+        print(f"[OK] OTP validated successfully for {email}")
         
         # Check if user exists
         existing_user = db.query(User).filter(User.email == email).first()
         
         if existing_user:
-            # User exists - this is a signin
+            # User exists — this is a signin
             existing_user.is_verified = True
+            existing_user.last_login = datetime.utcnow()
             db.commit()
             
-            roles = [existing_user.role.role_name] if existing_user.role else ["user"]
+            roles = [existing_user.role.role_name] if existing_user.role else ["member"]
             tokens = create_token_pair(existing_user.id, existing_user.email, roles)
             
-            print(f"✅ User {email} signed in successfully")
+            print(f"[OK] User {email} signed in successfully")
             
             return {
                 "success": True,
@@ -539,70 +358,59 @@ async def verify_otp(request: VerifyOTPRequest, db: Session = Depends(get_db)) -
                 "user_id": existing_user.id,
                 "email": existing_user.email,
                 "full_name": existing_user.full_name,
-                "role": existing_user.role.role_name if existing_user.role else "user",
+                "role": existing_user.role.role_name if existing_user.role else "member",
                 **tokens
             }
         else:
-            # User doesn't exist - check if signup data provided
-            if full_name and password:
-                print(f"📝 Creating new user: email={email}, full_name={full_name}, password_length={len(password)} chars, password_bytes={len(password.encode('utf-8'))} bytes")
-                
-                # Create new user
-                user_role = db.query(Role).filter(Role.role_name == "user").first()
-                if not user_role:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Default user role not found"
-                    )
-                
-                try:
-                    password_hash = hash_password(password)
-                except ValueError as e:
-                    print(f"❌ Password validation error for {email}: {str(e)}")
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=str(e)
-                    )
-                
-                new_user = User(
-                    full_name=full_name,
-                    email=email,
-                    phone=request.phone,
-                    password_hash=password_hash,
-                    role_id=user_role.role_id,
-                    is_active=True,
-                    is_verified=True
-                )
-                
-                db.add(new_user)
-                db.commit()
-                db.refresh(new_user)
-                
-                roles = [user_role.role_name]
-                tokens = create_token_pair(new_user.id, new_user.email, roles)
-                
-                print(f"✅ New user {email} signed up and verified successfully")
-                
-                return {
-                    "success": True,
-                    "message": "User created and verified successfully",
-                    "user_id": new_user.id,
-                    "email": new_user.email,
-                    "full_name": new_user.full_name,
-                    "role": user_role.role_name,
-                    **tokens
-                }
-            else:
-                # No signup data provided and user doesn't exist
+            # User doesn't exist — this is a signup, full_name is required
+            if not full_name:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="User account not found. Please sign up first or provide full_name and password."
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Full name is required for signup. Please provide full_name."
                 )
+            
+            print(f"[INFO] Creating new user: email={email}, full_name={full_name}")
+            
+            # Get default member role
+            member_role = db.query(Role).filter(Role.role_name == "member").first()
+            if not member_role:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Default member role not found. Please run seed script."
+                )
+            
+            new_user = User(
+                full_name=full_name,
+                email=email,
+                phone=request.phone,
+                role_id=member_role.role_id,
+                is_active=True,
+                is_verified=True
+            )
+            
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            
+            roles = [member_role.role_name]
+            tokens = create_token_pair(new_user.id, new_user.email, roles)
+            
+            print(f"[OK] New user {email} signed up and verified successfully")
+            
+            return {
+                "success": True,
+                "message": "User created and verified successfully",
+                "user_id": new_user.id,
+                "email": new_user.email,
+                "full_name": new_user.full_name,
+                "role": member_role.role_name,
+                **tokens
+            }
             
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ OTP verification error for {email}: {str(e)}")
+        print(f"[ERROR] OTP verification error for {email}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OTP verification failed: {str(e)}"
@@ -653,13 +461,13 @@ async def resend_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> 
         email_sent = EmailService.send_otp_email(email, otp)
         
         if not email_sent:
-            print(f"⚠️ Failed to resend email. OTP for {email}: {otp}")
+            print(f"[WARN] Failed to resend email. OTP for {email}: {otp}")
             return {
                 "success": False,
                 "message": "Failed to resend OTP email. Please check your email configuration (EMAIL_HOST_USER and EMAIL_HOST_PASSWORD in .env). Check server logs for details."
             }
         
-        print(f"✅ OTP resent for {email}: {otp_metadata}")
+        print(f"[OK] OTP resent for {email}: {otp_metadata}")
         
         # Mask email for security
         masked_email = email[:2] + "***" + email[-10:] if len(email) > 12 else email[:1] + "***" + email[-1:]

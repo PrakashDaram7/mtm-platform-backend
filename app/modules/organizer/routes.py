@@ -1,4 +1,4 @@
-"""Organizer module routes — event creation and management."""
+"""Event Manager (previously Organizer) module routes — legacy compatibility."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ def check_organizer_role(current_user: TokenData, db: Session):
     user = get_user_from_db(current_user.user_id, db)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    if not user_has_any_role(user, ["organizer", "admin"]):
+    if not user_has_any_role(user, ["event_manager", "admin"]):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Organizer role required"

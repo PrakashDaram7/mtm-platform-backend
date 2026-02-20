@@ -137,28 +137,22 @@ async def subscribe_to_plan(
         return {"success": False, "message": "You already have an active membership"}
 
     from datetime import datetime, timedelta
-    end_date = None
-    if not plan.is_lifetime and plan.duration_months:
-        end_date = datetime.utcnow() + timedelta(days=plan.duration_months * 30)
-
+    
+    # Sprint 1 Implementation defaults to active
     sub = MemberSubscription(
         user_id=user.id,
         plan_id=plan.id,
         status="active",
-        end_date=end_date,
         amount_paid=plan.price,
     )
+    
+    if not plan.is_lifetime and plan.duration_months:
+        sub.end_date = datetime.utcnow() + timedelta(days=plan.duration_months * 30)
+
     db.add(sub)
-
-    # Upgrade role to member if currently user
-    if user.role and user.role.role_name == "user":
-        from app.modules.auth.models import Role
-        member_role = db.query(Role).filter(Role.role_name == "member").first()
-        if member_role:
-            user.role_id = member_role.role_id
-
     db.commit()
-    return {"success": True, "message": f"Subscribed to {plan.name} successfully"}
+
+    return {"success": True, "message": f"Successfully subscribed to {plan.name}"}
 
 
 # ─── Notifications ───
@@ -236,3 +230,5 @@ async def get_user_payments(
             for p in payments
         ]
     }
+
+

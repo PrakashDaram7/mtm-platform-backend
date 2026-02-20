@@ -7,7 +7,7 @@ from app.utils.helpers import check_database_connection
 from app.modules.auth.routes import router as auth_router
 
 # Import ALL models so SQLAlchemy knows about them and creates tables
-from app.modules.auth.models import User, Role, Permission, OTP
+from app.modules.auth.models import User, Role, Permission, OTP, FamilyMember, AuditLog
 from app.modules.events.models import Event, EventRegistration
 from app.modules.members.models import MembershipPlan, MemberSubscription
 from app.modules.notifications.models import Notification

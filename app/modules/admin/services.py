@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.modules.auth.models import User, Role
-from app.core.security import hash_password
 
 
 class AdminUserService:
@@ -104,15 +103,14 @@ class AdminUserService:
 
     @staticmethod
     def create_user(db: Session, full_name: str, email: str, phone: str = None, 
-                   password: str = None, role_name: str = "user") -> Dict:
-        """Create a new user (admin only).
+                   role_name: str = "member") -> Dict:
+        """Create a new user (admin only). No password needed — OTP-only auth.
         
         Args:
             db: Database session
             full_name: User full name
             email: User email
             phone: User phone number
-            password: User password
             role_name: Role to assign to user
             
         Returns:
@@ -137,24 +135,11 @@ class AdminUserService:
                     "user": None
                 }
             
-            # Validate and hash password if provided
-            password_hash = None
-            if password:
-                try:
-                    password_hash = hash_password(password)
-                except ValueError as e:
-                    return {
-                        "success": False,
-                        "message": str(e),
-                        "user": None
-                    }
-            
-            # Create user
+            # Create user (no password — authentication is OTP-based)
             new_user = User(
                 full_name=full_name,
                 email=email,
                 phone=phone,
-                password_hash=password_hash,
                 role_id=role.role_id,
                 is_active=True,
                 is_verified=False
@@ -542,7 +527,8 @@ class AdminUserService:
                         "id": role.role_id,
                         "name": role.role_name,
                         "description": role.description if hasattr(role, 'description') else None,
-                        "created_at": role.created_at.isoformat() if hasattr(role, 'created_at') and role.created_at else None
+                        "created_at": role.created_at.isoformat() if hasattr(role, 'created_at') and role.created_at else None,
+                        "user_count": len(role.users) if hasattr(role, 'users') else 0
                     }
                     for role in roles
                 ]

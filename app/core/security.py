@@ -1,10 +1,12 @@
-"""Security utilities and JWT token handling with RBAC support."""
+"""Security utilities and JWT token handling with RBAC support.
+
+OTP-only authentication — no password hashing/verification needed.
+"""
 
 import os
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -21,9 +23,6 @@ ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", 7))
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # HTTP Bearer scheme
 security = HTTPBearer()
 
@@ -34,50 +33,6 @@ class TokenData:
         self.user_id = user_id
         self.email = email
         self.roles = roles
-
-
-def hash_password(password: str) -> str:
-    """Hash a password using bcrypt.
-    
-    Args:
-        password: Plain text password
-        
-    Returns:
-        Hashed password
-        
-    Raises:
-        ValueError: If password exceeds 72 bytes (bcrypt limit)
-    """
-    # Bcrypt has a 72-byte limit for passwords
-    if not isinstance(password, str):
-        raise ValueError("Password must be a string")
-    
-    byte_length = len(password.encode('utf-8'))
-    print(f"🔐 Hashing password: Length={len(password)} chars, Byte length={byte_length}")
-    
-    if byte_length > 72:
-        raise ValueError(f"Password is too long. Maximum 72 bytes allowed, got {byte_length} bytes.")
-    
-    try:
-        hashed = pwd_context.hash(password)
-        print(f"✅ Password hashed successfully")
-        return hashed
-    except Exception as e:
-        print(f"❌ Bcrypt hashing error: {str(e)}")
-        raise ValueError(f"Failed to hash password: {str(e)}")
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash.
-    
-    Args:
-        plain_password: Plain text password
-        hashed_password: Hashed password
-        
-    Returns:
-        True if password matches, False otherwise
-    """
-    return pwd_context.verify(plain_password, hashed_password)
 
 
 def create_access_token(user_id: str, email: str, roles: List[str], expires_delta: Optional[timedelta] = None) -> str:

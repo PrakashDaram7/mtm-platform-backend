@@ -56,7 +56,7 @@ async def list_all_events(
 ):
     """List all events for management (admin/organizer)."""
     user = get_user_from_db(current_user.user_id, db)
-    if not user or not user_has_any_role(user, ["admin", "organizer"]):
+    if not user or not user_has_any_role(user, ["admin", "event_manager"]):
         raise HTTPException(status_code=403, detail="Admin or Organizer role required")
     result = EventService.get_all_events(db, skip=skip, limit=limit, status=status)
     return result
@@ -71,7 +71,7 @@ async def create_event(
 ):
     """Create a new event (admin/organizer)."""
     user = get_user_from_db(current_user.user_id, db)
-    if not user or not user_has_any_role(user, ["admin", "organizer"]):
+    if not user or not user_has_any_role(user, ["admin", "event_manager"]):
         raise HTTPException(status_code=403, detail="Admin or Organizer role required")
 
     result = EventService.create_event(db, current_user.user_id, event_data.model_dump())
@@ -90,7 +90,7 @@ async def update_event(
 ):
     """Update an event (admin/organizer)."""
     user = get_user_from_db(current_user.user_id, db)
-    if not user or not user_has_any_role(user, ["admin", "organizer"]):
+    if not user or not user_has_any_role(user, ["admin", "event_manager"]):
         raise HTTPException(status_code=403, detail="Admin or Organizer role required")
 
     result = EventService.update_event(db, event_id, event_data.model_dump(exclude_none=True))
@@ -142,7 +142,7 @@ async def get_event_registrations(
 ):
     """Get all registrations for an event."""
     user = get_user_from_db(current_user.user_id, db)
-    if not user or not user_has_any_role(user, ["admin", "organizer"]):
+    if not user or not user_has_any_role(user, ["admin", "event_manager"]):
         raise HTTPException(status_code=403, detail="Admin or Organizer role required")
     return EventService.get_event_registrations(db, event_id)
 

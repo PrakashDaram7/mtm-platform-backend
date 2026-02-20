@@ -38,7 +38,8 @@ class MemberSubscription(Base):
     plan_id = Column(CHAR(36), ForeignKey("membership_plans.id"), nullable=False, index=True)
     status = Column(String(20), default="active", index=True)  # active, expired, cancelled
     start_date = Column(DateTime(timezone=True), server_default=func.now())
-    end_date = Column(DateTime(timezone=True), nullable=True)  # NULL = lifetime
+    end_date = Column(DateTime(timezone=True), nullable=True) # Computed based on plan
+    
     payment_id = Column(CHAR(36), nullable=True)
     amount_paid = Column(Float, default=0.0)
 

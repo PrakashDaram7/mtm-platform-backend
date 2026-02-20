@@ -1,59 +1,14 @@
-"""Auth module schemas for request and response validation."""
+"""Auth module schemas for request and response validation.
+
+OTP-only authentication — no password fields anywhere.
+"""
 
 from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional
 from datetime import datetime
 
 
-# ======================== Authentication Schemas ========================
-
-class UserLoginSchema(BaseModel):
-    """User login request schema."""
-    email: EmailStr = Field(..., description="User email")
-    password: str = Field(..., min_length=6, description="User password")
-    
-    class Config:
-        schema_extra = {
-            "example": {
-                "email": "user@example.com",
-                "password": "password123"
-            }
-        }
-
-
-class UserRegisterSchema(BaseModel):
-    """User registration request schema."""
-    full_name: str = Field(..., min_length=2, max_length=100, description="Full name")
-    email: EmailStr = Field(..., description="Email address")
-    phone: Optional[str] = Field(None, description="Phone number")
-    password: str = Field(..., min_length=6, description="Password")
-    
-    class Config:
-        schema_extra = {
-            "example": {
-                "full_name": "John Doe",
-                "email": "user@example.com",
-                "phone": "+1234567890",
-                "password": "password123"
-            }
-        }
-
-
-class ChangePasswordSchema(BaseModel):
-    """Change password request schema."""
-    current_password: str = Field(..., description="Current password")
-    new_password: str = Field(..., min_length=6, description="New password")
-    confirm_password: str = Field(..., min_length=6, description="Confirm new password")
-    
-    class Config:
-        schema_extra = {
-            "example": {
-                "current_password": "oldpassword123",
-                "new_password": "newpassword123",
-                "confirm_password": "newpassword123"
-            }
-        }
-
+# ======================== Token Schemas ========================
 
 class TokenResponseSchema(BaseModel):
     """Token response schema."""
@@ -91,7 +46,6 @@ class SendOTPRequest(BaseModel):
     @validator('email', 'phone', pre=True, always=True)
     def validate_identifier(cls, v, values):
         """Ensure either email or phone is provided."""
-        # This validator is called for each field
         if 'email' in values:
             email = values.get('email')
             phone = v if (hasattr(cls, '__fields__') and 'phone' in str(cls)) else values.get('phone')
@@ -130,12 +84,16 @@ class SendOTPResponse(BaseModel):
 
 
 class VerifyOTPRequest(BaseModel):
-    """Request schema for verifying OTP."""
+    """Request schema for verifying OTP.
+    
+    No password required — authentication is entirely OTP-based.
+    For signup: provide full_name along with email and otp.
+    For signin: provide only email and otp.
+    """
     email: Optional[EmailStr] = Field(None, description="Email used for OTP")
     phone: Optional[str] = Field(None, description="Phone used for OTP")
     otp: str = Field(..., min_length=4, max_length=10, description="OTP code to verify")
     full_name: Optional[str] = Field(None, description="Full name for new user signup")
-    password: Optional[str] = Field(None, description="Password for new user signup")
     
     class Config:
         schema_extra = {
@@ -143,38 +101,7 @@ class VerifyOTPRequest(BaseModel):
                 "email": "user@example.com",
                 "phone": None,
                 "otp": "123456",
-                "full_name": None,
-                "password": None
-            }
-        }
-
-
-class AuthTokenResponse(BaseModel):
-    """Response schema for authentication token."""
-    access_token: str = Field(..., description="JWT access token")
-    refresh_token: str = Field(..., description="JWT refresh token")
-    token_type: str = Field(default="bearer", description="Token type")
-    expires_in: int = Field(..., description="Access token expiration time in seconds")
-    user: dict = Field(..., description="User information with role")
-    
-    class Config:
-        schema_extra = {
-            "example": {
-                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                "token_type": "bearer",
-                "expires_in": 3600,
-                "user": {
-                    "id": "550e8400-e29b-41d4-a716-446655440000",
-                    "email": "user@example.com",
-                    "full_name": "John Doe",
-                    "is_verified": True,
-                    "role": {
-                        "role_id": "role-uuid",
-                        "role_name": "user",
-                        "description": "Regular user"
-                    }
-                }
+                "full_name": None
             }
         }
 
@@ -183,31 +110,24 @@ class VerifyOTPResponse(BaseModel):
     """Response schema for OTP verification."""
     success: bool = Field(..., description="Whether OTP verification was successful")
     message: str = Field(..., description="Response message")
-    auth_token: Optional[AuthTokenResponse] = Field(None, description="Authentication token on success")
-    remaining_attempts: Optional[int] = Field(None, description="Remaining OTP attempts on failure")
+    user_id: Optional[str] = Field(None, description="User ID")
+    email: Optional[str] = Field(None, description="User email")
+    full_name: Optional[str] = Field(None, description="User full name")
+    role: Optional[str] = Field(None, description="User role")
+    access_token: Optional[str] = Field(None, description="JWT access token")
+    refresh_token: Optional[str] = Field(None, description="JWT refresh token")
     
     class Config:
         schema_extra = {
             "example": {
                 "success": True,
                 "message": "OTP verified successfully",
-                "auth_token": {
-                    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                    "token_type": "bearer",
-                    "expires_in": 3600,
-                    "user": {
-                        "id": "550e8400-e29b-41d4-a716-446655440000",
-                        "email": "user@example.com",
-                        "full_name": "John Doe",
-                        "is_verified": True,
-                        "role": {
-                            "role_id": "role-uuid",
-                            "role_name": "user"
-                        }
-                    }
-                },
-                "remaining_attempts": None
+                "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                "email": "user@example.com",
+                "full_name": "Ravi Kumar",
+                "role": "member",
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
             }
         }
 
@@ -228,24 +148,6 @@ class ResendOTPRequest(BaseModel):
         }
 
 
-class ResendOTPResponse(BaseModel):
-    """Response schema for resend OTP."""
-    success: bool = Field(..., description="Whether OTP was resent successfully")
-    message: str = Field(..., description="Response message")
-    identifier: Optional[str] = Field(None, description="Masked identifier")
-    expires_in_seconds: Optional[int] = Field(None, description="OTP expiration time in seconds")
-    
-    class Config:
-        schema_extra = {
-            "example": {
-                "success": True,
-                "message": "OTP resent successfully",
-                "identifier": "us**@example.com",
-                "expires_in_seconds": 120
-            }
-        }
-
-
 class RefreshTokenRequest(BaseModel):
     """Request schema for refreshing access token."""
     refresh_token: str = Field(..., description="Refresh token")
@@ -256,26 +158,6 @@ class RefreshTokenRequest(BaseModel):
                 "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
             }
         }
-
-
-class RefreshTokenResponse(BaseModel):
-    """Response schema for refreshing token."""
-    access_token: str = Field(..., description="New JWT access token")
-    refresh_token: str = Field(..., description="New or same refresh token")
-    token_type: str = Field(default="bearer", description="Token type")
-    expires_in: int = Field(..., description="Access token expiration time in seconds")
-    
-    class Config:
-        schema_extra = {
-            "example": {
-                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                "token_type": "bearer",
-                "expires_in": 3600
-            }
-        }
-
-
 
 
 # ======================== Error Response Schema ========================
@@ -298,4 +180,3 @@ class ErrorResponse(BaseModel):
                 }
             }
         }
-

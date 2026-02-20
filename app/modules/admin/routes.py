@@ -92,8 +92,7 @@ async def create_user(
     full_name = request.get("full_name")
     email = request.get("email")
     phone = request.get("phone")
-    password = request.get("password")
-    role_name = request.get("role_name", "user")
+    role_name = request.get("role_name", "member")
     
     if not full_name or not email:
         raise HTTPException(
@@ -101,7 +100,7 @@ async def create_user(
             detail="Full name and email are required"
         )
     
-    result = AdminUserService.create_user(db, full_name, email, phone, password, role_name)
+    result = AdminUserService.create_user(db, full_name, email, phone, role_name)
     if result["success"]:
         return result
     else:
