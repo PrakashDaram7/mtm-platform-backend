@@ -1,5 +1,5 @@
 """
-Seed script — aligned with PRD Section 3.
+Seed script -- aligned with PRD Section 3.
 Populates roles, permissions, and sample users for the MTM Platform.
 
 PRD Roles (Section 3.1):
@@ -8,13 +8,24 @@ PRD Roles (Section 3.1):
 """
 
 import uuid
+import sys
+import os
+
+# Force UTF-8 output on Windows to avoid emoji encoding errors
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 from app.core.database import SessionLocal
 
-# Import models directly (skip __init__.py)
+# Import ALL models so SQLAlchemy can resolve all relationships
+# (User.membership back_populates='user' needs Membership to be loaded)
 import app.modules.auth.models as auth_models
-Role = auth_models.Role
-User = auth_models.User
+import app.modules.members.models as member_models   # MUST be imported before any session use
+
+Role       = auth_models.Role
+User       = auth_models.User
 Permission = auth_models.Permission
+AppSettings = member_models.AppSettings
 
 
 # =============================================================================
@@ -310,29 +321,44 @@ def seed_users(session):
 # 4) MEMBERSHIP PLANS
 # =============================================================================
 def seed_membership_plans(session):
-    """Insert default membership plans."""
+    """Insert default membership plans aligned with PRD 5.3."""
     print("\nSeeding membership plans...")
     from app.modules.members.models import MembershipPlan
     import json
 
     plans = [
         {
-            "name": "Annual Membership",
-            "description": "Standard annual membership with full access to events and community features.",
+            "name": "Annual Individual Membership",
+            "description": "Standard annual membership for an individual. Full access to MTM events, community features, and member portal.",
+            "membership_type": "individual",
             "price": 1200.0,
+            "currency": "MUR",
             "duration_months": 12,
             "is_lifetime": False,
-            "features": json.dumps(["All events access", "Digital membership card", "Forum participation", "Learning resources", "Community directory"]),
+            "features": json.dumps(["All events access", "Digital membership card", "Member portal access", "Community directory", "Newsletter & announcements"]),
             "sort_order": 1,
         },
         {
+            "name": "Annual Family Membership",
+            "description": "Annual membership covering a family unit. Includes all immediate family members.",
+            "membership_type": "family",
+            "price": 2000.0,
+            "currency": "MUR",
+            "duration_months": 12,
+            "is_lifetime": False,
+            "features": json.dumps(["Everything in Individual", "Covers immediate family", "Family event discounts", "Priority seating"]),
+            "sort_order": 2,
+        },
+        {
             "name": "Lifetime Membership",
-            "description": "One-time payment for lifetime access to all MTM platform features.",
+            "description": "One-time payment for lifetime access to all MTM platform features. Never expires.",
+            "membership_type": "individual",
             "price": 10000.0,
+            "currency": "MUR",
             "duration_months": None,
             "is_lifetime": True,
-            "features": json.dumps(["Everything in Annual", "Lifetime access", "Priority event seating", "Exclusive badge", "Dedicated support"]),
-            "sort_order": 2,
+            "features": json.dumps(["Everything in Annual", "Lifetime access", "Priority event seating", "Exclusive Lifetime badge", "Dedicated support channel"]),
+            "sort_order": 3,
         },
     ]
 
@@ -348,6 +374,38 @@ def seed_membership_plans(session):
         session.commit()
     except Exception as e:
         print(f"  ❌ Error seeding plans: {e}")
+        session.rollback()
+
+
+# =============================================================================
+# 4b) APP SETTINGS DEFAULTS
+# =============================================================================
+def seed_app_settings(session):
+    """Initialize platform settings with Sprint 2 defaults."""
+    print("\nSeeding app settings...")
+    from app.modules.members.models import AppSettings
+
+    defaults = [
+        ("auto_approve_membership",            "false",  "Auto-approve new membership applications without admin review"),
+        ("membership_renewal_reminder_days",   "60,30,7,0,7", "Days before/after expiry to send renewal reminders"),
+        ("platform_name",                      "Mauritius Telugu Mahasabha", "Platform display name"),
+        ("contact_email",                      "info@mtm.mu", "Contact email shown to members"),
+        ("currency",                           "MUR",    "Default currency for memberships"),
+        ("otp_expiry_minutes",                 "5",      "OTP expiry time in minutes"),
+        ("max_login_attempts",                 "5",      "Max OTP verification attempts before lockout"),
+    ]
+
+    try:
+        for key, value, description in defaults:
+            existing = session.query(AppSettings).filter(AppSettings.key == key).first()
+            if not existing:
+                session.add(AppSettings(key=key, value=value, description=description))
+                print(f"  ✅ Setting: {key} = {value}")
+            else:
+                print(f"  ⏭️  Setting exists: {key}")
+        session.commit()
+    except Exception as e:
+        print(f"  ❌ Error seeding settings: {e}")
         session.rollback()
 
 
@@ -459,6 +517,7 @@ def main():
         seed_permissions(session)
         seed_users(session)
         seed_membership_plans(session)
+        seed_app_settings(session)
         seed_sample_events(session)
 
         print("\n" + "=" * 60)
