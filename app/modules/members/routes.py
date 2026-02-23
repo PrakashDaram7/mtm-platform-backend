@@ -498,6 +498,33 @@ async def admin_unblock_membership(
     return result
 
 
+@router.post("/admin/{membership_id}/send-payment-link")
+async def admin_send_payment_link(
+    membership_id: str,
+    request: dict,
+    current_user: TokenData = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Admin: send a payment link email to a pending applicant.
+    Body: { payment_link: "https://...", notes?: "..." }
+    """
+    _require_admin(current_user, db)
+    payment_link = request.get("payment_link", "").strip()
+    if not payment_link:
+        raise HTTPException(status_code=400, detail="payment_link is required")
+    result = MembershipService.admin_send_payment_link(
+        db,
+        membership_id=membership_id,
+        admin_id=current_user.user_id,
+        payment_link=payment_link,
+        notes=request.get("notes", ""),
+    )
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ADMIN — CSV MIGRATION  (PRD 5.3.3)
 # ─────────────────────────────────────────────────────────────────────────────

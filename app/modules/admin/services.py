@@ -258,6 +258,27 @@ class AdminUserService:
                     "message": "User not found"
                 }
             
+            from app.modules.auth.models import OTP, FamilyMember, AuditLog
+            from app.modules.members.models import Membership, MemberSubscription, AppSettings
+            from app.modules.payments.models import Payment
+            from app.modules.notifications.models import Notification
+            from app.modules.events.models import EventRegistration, Event
+
+            # Nullify foreign keys that don't cascade on delete
+            db.query(Membership).filter(Membership.approved_by == user_id).update({Membership.approved_by: None})
+            db.query(AppSettings).filter(AppSettings.updated_by == user_id).update({AppSettings.updated_by: None})
+            db.query(Event).filter(Event.organizer_id == user_id).update({Event.organizer_id: None})
+
+            # Explicitly delete dependent records to avoid column cannot be null integrtiy constraints
+            db.query(OTP).filter(OTP.user_id == user_id).delete()
+            db.query(FamilyMember).filter(FamilyMember.member_id == user_id).delete()
+            db.query(AuditLog).filter(AuditLog.user_id == user_id).delete()
+            db.query(Membership).filter(Membership.user_id == user_id).delete()
+            db.query(MemberSubscription).filter(MemberSubscription.user_id == user_id).delete()
+            db.query(Payment).filter(Payment.user_id == user_id).delete()
+            db.query(Notification).filter(Notification.user_id == user_id).delete()
+            db.query(EventRegistration).filter(EventRegistration.user_id == user_id).delete()
+
             db.delete(user)
             db.commit()
             

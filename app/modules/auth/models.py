@@ -103,9 +103,9 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # --- Relationships ---
-    otps = relationship("OTP", back_populates="user")
-    family_members = relationship("FamilyMember", back_populates="primary_member", foreign_keys="FamilyMember.member_id")
-    membership = relationship("Membership", foreign_keys="Membership.user_id", back_populates="user", uselist=False)
+    otps = relationship("OTP", back_populates="user", cascade="all, delete-orphan")
+    family_members = relationship("FamilyMember", back_populates="primary_member", foreign_keys="FamilyMember.member_id", cascade="all, delete-orphan")
+    membership = relationship("Membership", foreign_keys="Membership.user_id", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 
 class FamilyMember(Base):

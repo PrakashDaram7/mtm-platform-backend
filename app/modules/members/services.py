@@ -484,6 +484,87 @@ class MembershipService:
         _log_audit(db, admin_id, "membership.unblock", m.id, {})
         return {"success": True, "message": "Membership unblocked"}
 
+    @staticmethod
+    def admin_send_payment_link(
+        db: Session,
+        membership_id: str,
+        admin_id: str,
+        payment_link: str,
+        notes: str = ""
+    ) -> Dict:
+        """
+        Admin sends a payment link email to the pending applicant.
+        Records the link and notes on the membership for audit purposes.
+        Does NOT change the membership status (stays 'pending' until admin approves).
+        """
+        from app.core.email_service import EmailService
+
+        m = db.query(Membership).filter(Membership.id == membership_id).first()
+        if not m:
+            return {"success": False, "message": "Membership not found"}
+        if m.status not in ("pending", "rejected"):
+            return {
+                "success": False,
+                "message": f"Payment link can only be sent for pending applications. Current status: {m.status}"
+            }
+
+        if not payment_link or not payment_link.startswith("http"):
+            return {"success": False, "message": "A valid payment URL (starting with http) is required"}
+
+        # Persist link + note on membership
+        m.admin_notes = (m.admin_notes or "") + f"\n[Payment Link Sent] {payment_link}"
+        if notes:
+            m.admin_notes += f" — {notes}"
+        db.commit()
+        db.refresh(m)
+
+        # Attempt email
+        user  = m.user
+        plan  = m.plan
+        sent  = False
+        if user and user.email:
+            sent = EmailService.send_payment_link_email(
+                recipient_email=user.email,
+                member_name=user.full_name or "Member",
+                plan_name=plan.name if plan else "Membership",
+                amount=float(plan.price) if plan else float(m.amount_paid or 0),
+                currency=plan.currency if plan else "MUR",
+                payment_link=payment_link,
+                notes=notes,
+            )
+
+        # In-app notification
+        try:
+            from app.modules.notifications.models import Notification
+            notif = Notification(
+                user_id=m.user_id,
+                title="Payment Link Ready 💳",
+                message=(
+                    f"Your membership application has been reviewed. "
+                    f"Please complete your payment of {plan.currency if plan else 'MUR'} "
+                    f"{float(plan.price if plan else m.amount_paid or 0):,.0f} "
+                    f"for the {plan.name if plan else 'membership'} plan."
+                ),
+                notification_type="payment",
+                link=payment_link,
+            )
+            db.add(notif)
+            db.commit()
+        except Exception as exc:
+            print(f"[WARN] In-app notification failed: {exc}")
+
+        _log_audit(db, admin_id, "membership.payment_link_sent", m.id, {
+            "payment_link": payment_link,
+            "email_sent": sent,
+            "notes": notes,
+        })
+
+        return {
+            "success": True,
+            "message": f"Payment link {'sent via email' if sent else 'recorded (email delivery failed — check SMTP config)'}.",
+            "email_sent": sent,
+        }
+
 
     # ─── List / Detail ────────────────────────────────────────────────────────
 

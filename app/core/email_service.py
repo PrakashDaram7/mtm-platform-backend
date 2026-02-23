@@ -101,18 +101,142 @@ class EmailService:
             return False
     
     @staticmethod
-    def send_otp_sms(phone_number: str, otp: str) -> dict:
-        """Send OTP to user's phone number (SMS).
-        
-        Currently not implemented. Returns error message.
-        
+    def send_payment_link_email(
+        recipient_email: str,
+        member_name: str,
+        plan_name: str,
+        amount: float,
+        currency: str,
+        payment_link: str,
+        notes: str = ""
+    ) -> bool:
+        """Send a payment link email to a member after admin review.
+
         Args:
-            phone_number: Phone number in international format
-            otp: 6-digit OTP code
-            
+            recipient_email: Member's email address
+            member_name:     Member's full name
+            plan_name:       Membership plan name
+            amount:          Amount due
+            currency:        Currency code (e.g. MUR)
+            payment_link:    The URL the member should click to pay
+            notes:           Optional admin note to include
+
         Returns:
-            Dictionary with success status and message
+            True if sent successfully, False otherwise
         """
+        try:
+            if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
+                logger.error("Email credentials not configured.")
+                return False
+
+            message = MIMEMultipart()
+            message['From'] = EMAIL_FROM_ADDRESS
+            message['To'] = recipient_email
+            message['Subject'] = 'MTM Digital Platform – Complete Your Membership Payment'
+
+            notes_block = f"""
+                        <div style="background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:6px;padding:12px 16px;margin:16px 0;">
+                            <p style="margin:0;color:#92400E;font-size:14px;"><strong>Note from Admin:</strong> {notes}</p>
+                        </div>""" if notes else ""
+
+            email_body = f"""
+            <html>
+                <body style="font-family:Arial,sans-serif;background:#f5f7fa;margin:0;padding:0;">
+                    <div style="max-width:600px;margin:40px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
+                        <!-- Header -->
+                        <div style="background:linear-gradient(135deg,#6C3CE1,#8B5CF6);padding:32px 32px 24px;">
+                            <h1 style="color:#fff;margin:0;font-size:22px;font-weight:800;">🕉️ Mauritius Telugu Mahasabha</h1>
+                            <p style="color:rgba(255,255,255,0.75);margin:6px 0 0;font-size:14px;">Membership Payment Request</p>
+                        </div>
+
+                        <!-- Body -->
+                        <div style="padding:32px;">
+                            <p style="font-size:16px;color:#111827;margin:0 0 8px;">Dear <strong>{member_name}</strong>,</p>
+                            <p style="color:#6B7280;font-size:14px;line-height:1.6;margin:0 0 20px;">
+                                Your membership application has been reviewed by our admin team.
+                                Please complete your payment to activate your membership.
+                            </p>
+
+                            {notes_block}
+
+                            <!-- Payment Summary -->
+                            <div style="background:#F5F3FF;border:2px solid #DDD6FE;border-radius:12px;padding:20px 24px;margin:0 0 24px;">
+                                <p style="margin:0 0 12px;color:#6C3CE1;font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">Payment Summary</p>
+                                <table style="width:100%;border-collapse:collapse;">
+                                    <tr>
+                                        <td style="color:#6B7280;font-size:14px;padding:4px 0;">Plan</td>
+                                        <td style="color:#111827;font-size:14px;font-weight:700;text-align:right;">{plan_name}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="color:#6B7280;font-size:14px;padding:4px 0;">Amount Due</td>
+                                        <td style="color:#6C3CE1;font-size:18px;font-weight:800;text-align:right;">{currency} {amount:,.0f}</td>
+                                    </tr>
+                                </table>
+                            </div>
+
+                            <!-- CTA Button -->
+                            <div style="text-align:center;margin:28px 0;">
+                                <a href="{payment_link}" target="_blank"
+                                   style="display:inline-block;padding:14px 36px;
+                                          background:linear-gradient(135deg,#6C3CE1,#8B5CF6);
+                                          color:#fff;font-size:16px;font-weight:700;
+                                          text-decoration:none;border-radius:10px;
+                                          box-shadow:0 4px 16px rgba(108,60,225,0.35);">
+                                    💳 Complete Payment Now
+                                </a>
+                            </div>
+
+                            <p style="color:#9CA3AF;font-size:13px;text-align:center;margin:0 0 8px;">
+                                Or copy this link in your browser:
+                            </p>
+                            <p style="background:#F3F4F6;border-radius:8px;padding:10px 14px;font-size:12px;
+                                      color:#6C3CE1;word-break:break-all;text-align:center;margin:0 0 24px;">
+                                {payment_link}
+                            </p>
+
+                            <p style="color:#6B7280;font-size:13px;line-height:1.6;">
+                                After completing payment, please allow up to 24 hours for your membership
+                                to be fully activated. You will receive a confirmation email with your
+                                membership number.
+                            </p>
+                        </div>
+
+                        <!-- Footer -->
+                        <div style="background:#F9FAFB;border-top:1px solid #E5E7EB;padding:20px 32px;text-align:center;">
+                            <p style="color:#9CA3AF;font-size:12px;margin:0;">
+                                MTM Digital Platform &nbsp;|&nbsp;
+                                <a href="mailto:info@mtm.mu" style="color:#6C3CE1;text-decoration:none;">info@mtm.mu</a>
+                            </p>
+                        </div>
+                    </div>
+                </body>
+            </html>
+            """
+
+            message.attach(MIMEText(email_body, 'html'))
+
+            with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=10) as server:
+                if EMAIL_USE_TLS:
+                    server.starttls()
+                server.login(EMAIL_HOST_USER, EMAIL_HOST_PASSWORD)
+                server.send_message(message)
+
+            logger.info(f"✅ Payment link email sent to {recipient_email}")
+            return True
+
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"❌ Email auth failed: {str(e)}")
+            return False
+        except smtplib.SMTPException as e:
+            logger.error(f"❌ SMTP error: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Payment link email error: {str(e)}")
+            return False
+
+    @staticmethod
+    def send_otp_sms(phone_number: str, otp: str) -> dict:
+        """Send OTP to user's phone number (SMS). Currently not implemented."""
         return {
             "success": False,
             "message": "OTP via phone/SMS is not yet implemented. Please use email to receive your OTP."

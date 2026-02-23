@@ -196,6 +196,85 @@ async def moderator_panel(
 
 # ==================== OTP ROUTES ====================
 
+@router.post("/check-exists")
+async def check_user_exists(request: dict, db: Session = Depends(get_db)) -> dict:
+    """Check if an email or phone number is already registered."""
+    email = request.get("email", "").strip()
+    phone = request.get("phone", "").strip()
+    
+    user = None
+    field = ""
+    
+    if email:
+        user = db.query(User).filter(User.email == email).first()
+        field = "email"
+            
+    if not user and phone:
+        user = db.query(User).filter(User.phone == phone).first()
+        field = "phone"
+            
+    if not user:
+        return {"exists": False}
+
+    from app.modules.members.models import Membership
+    membership = db.query(Membership).filter(Membership.user_id == user.id).first()
+    
+    if not membership:
+        # User exists but no membership applied?
+        return {
+            "exists": True, 
+            "field": field, 
+            "message": "Account exists but no membership was found.",
+            "show_login": True
+        }
+    
+    if membership.status == "pending":
+        if membership.admin_notes and "[Payment Link Sent]" in membership.admin_notes:
+            return {
+                "exists": True, 
+                "field": field, 
+                "message": "Your request is approved! We've sent a payment link to your email. Please complete payment to activate.",
+                "show_login": False
+            }
+        return {
+            "exists": True, 
+            "field": field, 
+            "message": "Your application is still under review by the administrator. Please wait for approval.",
+            "show_login": False
+        }
+        
+    if membership.status == "active":
+        return {
+            "exists": True, 
+            "field": field, 
+            "message": "You are already an active registered member.",
+            "show_login": True
+        }
+        
+    if membership.status == "rejected":
+        return {
+            "exists": True, 
+            "field": field, 
+            "message": "Your previous application was rejected. Please contact support.",
+            "show_login": False
+        }
+        
+    if membership.status == "blocked":
+        return {
+            "exists": True, 
+            "field": field, 
+            "message": "Your account has been blocked.",
+            "show_login": False
+        }
+
+    return {
+        "exists": True, 
+        "field": field, 
+        "message": f"Account with this {field} is already registered.",
+        "show_login": True
+    }
+
+
 @router.post("/signup-send-otp")
 async def signup_send_otp(request: SendOTPRequest, db: Session = Depends(get_db)) -> dict:
     """Send OTP for signup. Only for new users (email must not exist)."""
